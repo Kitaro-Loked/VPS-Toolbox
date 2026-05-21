@@ -332,10 +332,27 @@ setup_duckdns_auto() {
             local RESULT=$(curl -s "https://www.duckdns.org/update?domains=$DUCK_DOMAIN&token=$duck_token&ip=$PUBLIC_IP")
             
             if [[ "$RESULT" == "OK" ]]; then
-                log "DuckDNS 域名申请成功!"
+                log "DuckDNS 域名更新成功!"
             else
                 warn "域名更新返回: $RESULT"
                 warn "如果域名不存在，DuckDNS 会自动创建"
+            fi
+            
+            # Wait for DNS propagation
+            log "等待 DNS 传播，最多60秒..."
+            local DNS_READY=0
+            for i in {1..12}; do
+                sleep 5
+                if host "$DDNS_DOMAIN" >/dev/null 2>&1 || nslookup "$DDNS_DOMAIN" >/dev/null 2>&1; then
+                    DNS_READY=1
+                    log "DNS 已生效!"
+                    break
+                fi
+                echo -n "."
+            done
+            echo ""
+            if [[ $DNS_READY -eq 0 ]]; then
+                warn "DNS 尚未完全传播，继续尝试..."
             fi
             
             # 保存配置
