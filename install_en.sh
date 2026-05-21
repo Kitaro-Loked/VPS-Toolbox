@@ -1,4 +1,6 @@
 #!/bin/bash
+# Auto-fix CRLF: convert Windows line endings if present
+sed -i "s/\r$//" "$0" 2>/dev/null || true
 # ============================================================
 # VPS Toolbox - One-click deploy script
 # Features: DDNS/WARP/Vless/Hysteria2/SS/VMess/Trojan

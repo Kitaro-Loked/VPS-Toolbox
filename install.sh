@@ -1,4 +1,6 @@
 #!/bin/bash
+# Auto-fix CRLF: convert Windows line endings if present
+sed -i "s/\r$//" "$0" 2>/dev/null || true
 # ============================================================
 # VPS Toolbox - 一键部署脚本
 # 功能: DDNS/WARP/Vless/Hysteria2/SS/VMess/Trojan
