@@ -171,13 +171,25 @@ setup_cloudflare_ddns() {
     echo ""
     info "Cloudflare DDNS 配置"
     echo "----------------------------------------"
-    read -rp "请输入 Cloudflare API Token: " cf_token
-    read -rp "请输入域名 (例如: example.com): " cf_domain
-    read -rp "请输入子域名前缀 (例如: vps，留空使用根域名): " cf_subdomain
+    cf_token=""
+    while [[ -z "$cf_token" ]]; do
+        read -rp "请输入 Cloudflare API Token: " cf_token
+        cf_token=$(echo "$cf_token" | xargs)
+        if [[ -z "$cf_token" ]]; then
+            warn "API Token 不能为空，请重新输入"
+        fi
+    done
     
-    if [[ -z "$cf_token" || -z "$cf_domain" ]]; then
-        error "API Token 和域名不能为空"
-    fi
+    cf_domain=""
+    while [[ -z "$cf_domain" ]]; do
+        read -rp "请输入域名 (例如: example.com): " cf_domain
+        cf_domain=$(echo "$cf_domain" | xargs)
+        if [[ -z "$cf_domain" ]]; then
+            warn "域名不能为空，请重新输入"
+        fi
+    done
+    
+    read -rp "请输入子域名前缀 (例如: vps，留空使用根域名): " cf_subdomain
     
     log "正在获取 Zone ID..."
     ZONE_ID=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones?name=$cf_domain" \
@@ -303,10 +315,16 @@ setup_duckdns_auto() {
     
     case $duck_choice in
         1)
-            read -rp "请输入 DuckDNS Token: " duck_token
-            if [[ -z "$duck_token" ]]; then
-                error "Token 不能为空"
-            fi
+            # Loop until we get a non-empty token
+            duck_token=""
+            while [[ -z "$duck_token" ]]; do
+                read -rp "请输入 DuckDNS Token: " duck_token
+                # Trim whitespace
+                duck_token=$(echo "$duck_token" | xargs)
+                if [[ -z "$duck_token" ]]; then
+                    warn "Token 不能为空，请重新输入"
+                fi
+            done
             
             # 尝试更新域名
             local RESULT=$(curl -s "https://www.duckdns.org/update?domains=$DUCK_DOMAIN&token=$duck_token&ip=$PUBLIC_IP")
@@ -398,12 +416,23 @@ setup_duckdns() {
     echo ""
     info "DuckDNS 配置"
     echo "----------------------------------------"
-    read -rp "请输入 DuckDNS Token: " duck_token
-    read -rp "请输入子域名 (例如: myvps): " duck_domain
+    duck_token=""
+    while [[ -z "$duck_token" ]]; do
+        read -rp "请输入 DuckDNS Token: " duck_token
+        duck_token=$(echo "$duck_token" | xargs)
+        if [[ -z "$duck_token" ]]; then
+            warn "Token 不能为空，请重新输入"
+        fi
+    done
     
-    if [[ -z "$duck_token" || -z "$duck_domain" ]]; then
-        error "Token 和域名不能为空"
-    fi
+    duck_domain=""
+    while [[ -z "$duck_domain" ]]; do
+        read -rp "请输入子域名 (例如: myvps): " duck_domain
+        duck_domain=$(echo "$duck_domain" | xargs)
+        if [[ -z "$duck_domain" ]]; then
+            warn "子域名不能为空，请重新输入"
+        fi
+    done
     
     DDNS_DOMAIN="${duck_domain}.duckdns.org"
     PUBLIC_IP=$(curl -s -4 https://api.ipify.org)
@@ -439,14 +468,33 @@ setup_noip() {
     echo ""
     info "No-IP 配置"
     echo "----------------------------------------"
-    read -rp "请输入 No-IP 用户名: " noip_user
-    read -rsp "请输入 No-IP 密码: " noip_pass
-    echo ""
-    read -rp "请输入主机名 (例如: myvps.ddns.net): " noip_host
+    noip_user=""
+    while [[ -z "$noip_user" ]]; do
+        read -rp "请输入 No-IP 用户名: " noip_user
+        noip_user=$(echo "$noip_user" | xargs)
+        if [[ -z "$noip_user" ]]; then
+            warn "用户名不能为空，请重新输入"
+        fi
+    done
     
-    if [[ -z "$noip_user" || -z "$noip_pass" || -z "$noip_host" ]]; then
-        error "所有字段都不能为空"
-    fi
+    noip_pass=""
+    while [[ -z "$noip_pass" ]]; do
+        read -rsp "请输入 No-IP 密码: " noip_pass
+        echo ""
+        noip_pass=$(echo "$noip_pass" | xargs)
+        if [[ -z "$noip_pass" ]]; then
+            warn "密码不能为空，请重新输入"
+        fi
+    done
+    
+    noip_host=""
+    while [[ -z "$noip_host" ]]; do
+        read -rp "请输入主机名 (例如: myvps.ddns.net): " noip_host
+        noip_host=$(echo "$noip_host" | xargs)
+        if [[ -z "$noip_host" ]]; then
+            warn "主机名不能为空，请重新输入"
+        fi
+    done
     
     DDNS_DOMAIN="$noip_host"
     PUBLIC_IP=$(curl -s -4 https://api.ipify.org)
@@ -514,7 +562,7 @@ get_domain() {
     
     case $domain_choice in
         1)
-            setup_scritch
+            setup_duckdns_auto
             if [[ -n "$DDNS_DOMAIN" ]]; then
                 echo "$DDNS_DOMAIN"
                 return 0
@@ -523,13 +571,16 @@ get_domain() {
             fi
             ;;
         2)
-            read -rp "请输入您的域名: " custom_domain
-            if [[ -n "$custom_domain" ]]; then
-                echo "$custom_domain"
-                return 0
-            else
-                error "域名不能为空"
-            fi
+            custom_domain=""
+            while [[ -z "$custom_domain" ]]; do
+                read -rp "请输入您的域名: " custom_domain
+                custom_domain=$(echo "$custom_domain" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+                if [[ -z "$custom_domain" ]]; then
+                    warn "域名不能为空，请重新输入"
+                fi
+            done
+            echo "$custom_domain"
+            return 0
             ;;
         3)
             return 1

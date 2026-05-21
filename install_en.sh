@@ -1,7 +1,7 @@
 #!/bin/bash
 # ============================================================
-# VPS Toolbox - ????scrision
-# Function: DDNS/WARP/Vless/Hysteria2/SS/VMess/Trojan
+# VPS Toolbox - One-click deploy script
+# Features: DDNS/WARP/Vless/Hysteria2/SS/VMess/Trojan
 # Author: Kitaro-Loked
 # Repo: https://github.com/Kitaro-Loked/VPS-Toolbox
 # Version: 2.0.0
@@ -9,7 +9,7 @@
 
 set -e
 
-# Colorble?
+# Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -17,24 +17,24 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-# GlobalVars
+# Global vars
 CONFIG_DIR="/etc/vps-toolbox"
 LOG_FILE="/var/log/vps-toolbox.log"
 DDNS_DOMAIN=""
 DDNS_PROVIDER=""
 DDNS_PASS=""
 
-# Log??
+# Log functions
 log() {
     echo -e "${GREEN}[$(date '+%Y-%m-%d %H:%M:%S')] $1${NC}" | tee -a "$LOG_FILE"
 }
 
 warn() {
-    echo -e "${YELLOW}[$(date '+%Y-%m-%d %H:%M:%S')] ??: $1${NC}" | tee -a "$LOG_FILE"
+    echo -e "${YELLOW}[$(date '+%Y-%m-%d %H:%M:%S')] WARNING: $1${NC}" | tee -a "$LOG_FILE"
 }
 
 error() {
-    echo -e "${RED}[$(date '+%Y-%m-%d %H:%M:%S')] ??: $1${NC}" | tee -a "$LOG_FILE"
+    echo -e "${RED}[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: $1${NC}" | tee -a "$LOG_FILE"
     exit 1
 }
 
@@ -42,14 +42,14 @@ info() {
     echo -e "${BLUE}[INFO] $1${NC}"
 }
 
-# deteckroot??
+# Check root
 check_root() {
     if [[ $EUID -ne 0 ]]; then
         error "requestuse root ????scrision"
     fi
 }
 
-# detecksystemtype
+# Check system
 check_system() {
     if [[ -f /etc/os-release ]]; then
         . /etc/os-release
@@ -77,9 +77,9 @@ check_system() {
     log "detecttosystem: $OS $VER"
 }
 
-# installeddependencies
+# Install dependencies
 install_dependencies() {
-    log "ininginstalledbasicdependencies..."
+    log "Installingbasicdependencies..."
     
     if [[ "$PKG_MANAGER" == "apt" ]]; then
         apt-get update -y >/dev/null 2>&1
@@ -93,19 +93,19 @@ install_dependencies() {
     
     mkdir -p "$CONFIG_DIR"
     
-    log "basicdependenciesinstalledcomerate"
+    log "Dependencies installed"
 }
 
-# ==================== DDNS Function ====================
+# ==================== DDNS Features ====================
 
 setup_ddns() {
     clear
     echo ""
     echo -e "${CYAN}============================================================${NC}"
-    echo -e "${CYAN}                   DDNS Domainapplyrequestandmanage${NC}"
+    echo -e "${CYAN}                   DDNS Domain Setup${NC}"
     echo -e "${CYAN}============================================================${NC}"
     echo ""
-    echo -e "${YELLOW}requestselect DDNS servicepro:${NC}"
+    echo -e "${YELLOW}Select DDNS provider:${NC}"
     echo ""
     echo -e "  ${GREEN}1. Auto-Apply DuckDNS (easiest)${NC}"
     echo "     No website signup, apply via command line"
@@ -115,7 +115,7 @@ setup_ddns() {
     echo ""
     echo "  3. Cloudflare (have domain)"
     echo "  4. No-IP (have account)"
-    echo "  5. ?back??ple"
+    echo "  5. Back??ple"
     echo ""
     read -rp "requestselect [1-5]: " ddns_choice
     
@@ -125,14 +125,14 @@ setup_ddns() {
         3) setup_cloudflare_ddns ;;
         4) setup_noip ;;
         5) return ;;
-        *) warn "no-brainer?select"; sleep 2; setup_ddns ;;
+        *) warn "Invalid choice"; sleep 2; setup_ddns ;;
     esac
 }
 
 # showPublic IP
 show_public_ip() {
     echo ""
-    info "getPublic IPInfo..."
+    info "Getting public IP info..."
     echo "----------------------------------------"
     
     local IPV4=$(curl -s -4 https://api.ipify.org 2>/dev/null || curl -s -4 https://ifconfig.me 2>/dev/null)
@@ -140,21 +140,21 @@ show_public_ip() {
     
     echo ""
     echo -e "${GREEN}========================================${NC}"
-    echo -e "${GREEN}           service???Info${NC}"
+    echo -e "${GREEN}           Server Network Info${NC}"
     echo -e "${GREEN}========================================${NC}"
     echo ""
-    echo -e "${CYAN}IPv4 ??:${NC} $IPV4"
-    echo -e "${CYAN}IPv6 ??:${NC} $IPV6"
+    echo -e "${CYAN}IPv4 Address:${NC} $IPV4"
+    echo -e "${CYAN}IPv6 Address:${NC} $IPV6"
     echo ""
-    echo -e "${YELLOW}useinstruction:${NC}"
-    echo "  - Shadowsocks candirectuse IP ??"
-    echo "  - Hysteria2 canuse IP + ??cert"
-    echo "  - Vless/VMess/Trojan needDomain+cert"
+    echo -e "${YELLOW}Usage:${NC}"
+    echo "  - Shadowsocks can use IP directly"
+    echo "  - Hysteria2 can use IP + self-signed cert"
+    echo "  - Vless/VMess/Trojan need domain + cert"
     echo ""
-    echo -e "${YELLOW}needDomain，requestselect:${NC}"
-    echo "  1. DuckDNS (mostsimple)"
-    echo "  2. Cloudflare (moststable)"
-    echo "  3. ?back"
+    echo -e "${YELLOW}For domain, select:${NC}"
+    echo "  1. DuckDNS (Simplest)"
+    echo "  2. Cloudflare (Most stable)"
+    echo "  3. Back"
     echo ""
     read -rp "requestselect [1-3]: " ip_choice
     
@@ -162,37 +162,49 @@ show_public_ip() {
         1) setup_duckdns ;;
         2) setup_cloudflare_ddns ;;
         3) return ;;
-        *) warn "no-brainer?select"; sleep 2; show_public_ip ;;
+        *) warn "Invalid choice"; sleep 2; show_public_ip ;;
     esac
 }
 
 # Cloudflare DDNS
 setup_cloudflare_ddns() {
     echo ""
-    info "Cloudflare DDNS config"
+    info "Cloudflare DDNS Setup"
     echo "----------------------------------------"
-    read -rp "requestout? Cloudflare API Token: " cf_token
-    read -rp "requestout?Domain (e.g.: example.com): " cf_domain
-    read -rp "requestout?subDomain?? (e.g.: vps，leaveemptyuse?Domain): " cf_subdomain
+    cf_token=""
+    while [[ -z "$cf_token" ]]; do
+        read -rp "Enter Cloudflare API Token: " cf_token
+        cf_token=$(echo "$cf_token" | xargs)
+        if [[ -z "$cf_token" ]]; then
+            warn "API Token cannot be empty, please re-enter"
+        fi
+    done
     
-    if [[ -z "$cf_token" || -z "$cf_domain" ]]; then
-        error "API Token ?Domainnottion?empty"
-    fi
+    cf_domain=""
+    while [[ -z "$cf_domain" ]]; do
+        read -rp "Enter domain (e.g.: example.com): " cf_domain
+        cf_domain=$(echo "$cf_domain" | xargs)
+        if [[ -z "$cf_domain" ]]; then
+            warn "Domain cannot be empty, please re-enter"
+        fi
+    done
     
-    log "iningget Zone ID..."
+    read -rp "Enter subdomain prefix (e.g.: vps，leave empty for root): " cf_subdomain
+    
+    log "Getting Zone ID..."
     ZONE_ID=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones?name=$cf_domain" \
         -H "Authorization: Bearer $cf_token" \
         -H "Content-Type: application/json" | jq -r '.result[0].id')
     
     if [[ "$ZONE_ID" == "null" || -z "$ZONE_ID" ]]; then
-        error "no-brainerwayget Zone ID，requestdeteck API Token ?Domain"
+        error "Cannot get Zone ID, check API Token and domain"
     fi
     
     log "Zone ID: $ZONE_ID"
     
     PUBLIC_IP=$(curl -s -4 https://api.ipify.org || curl -s -4 https://ifconfig.me)
     if [[ -z "$PUBLIC_IP" ]]; then
-        error "no-brainerwaygetPublic IP??"
+        error "Cannot get public IP"
     fi
     
     if [[ -n "$cf_subdomain" ]]; then
@@ -206,13 +218,13 @@ setup_cloudflare_ddns() {
         -H "Content-Type: application/json" | jq -r '.result[0].id')
     
     if [[ "$RECORD_ID" == "null" || -z "$RECORD_ID" ]]; then
-        log "create DNS ??..."
+        log "Creating DNS record..."
         curl -s -X POST "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records" \
             -H "Authorization: Bearer $cf_token" \
             -H "Content-Type: application/json" \
             --data "{\"type\":\"A\",\"name\":\"$FULL_DOMAIN\",\"content\":\"$PUBLIC_IP\",\"ttl\":120,\"proxied\":false}" >/dev/null
     else
-        log "update DNS ??..."
+        log "Updating DNS record..."
         curl -s -X PUT "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records/$RECORD_ID" \
             -H "Authorization: Bearer $cf_token" \
             -H "Content-Type: application/json" \
@@ -255,16 +267,16 @@ EOF
     
     DDNS_DOMAIN="$FULL_DOMAIN"
     
-    log "DDNS configcomerate!"
+    log "DDNS configured!"
     log "Domain: $FULL_DOMAIN"
-    log "??IP: $PUBLIC_IP"
-    log "Auto-update cron job added (every 5minutes)"
+    log "Current IP: $PUBLIC_IP"
+    log "Auto-update cron job added (every 5 min)"
     
     echo ""
-    read -rp "?back????..."
+    read -rp "Press Enter to continue..."
 }
 
-# DuckDNS - ????applyrequest（no-brainerneed????）
+# DuckDNS - ????applyrequest（no-brainerneedRegistering??）
 setup_duckdns_auto() {
     echo ""
     info "Auto-applying DuckDNS domain..."
@@ -288,7 +300,7 @@ setup_duckdns_auto() {
     echo ""
     
     # DuckDNS ??no-brainer token create（use "none" Au? token cancreatetemporaryDomain）
-    # ?up??so??use DuckDNS ?sim?????
+    # ?up??so??use DuckDNS ?sim?Registering??
     # ??? DuckDNS support email get token
     
     echo -e "${YELLOW}DuckDNS Auto-Apply Guide:${NC}"
@@ -303,10 +315,16 @@ setup_duckdns_auto() {
     
     case $duck_choice in
         1)
-            read -rp "requestout? DuckDNS Token: " duck_token
-            if [[ -z "$duck_token" ]]; then
-                error "Token nottion?empty"
-            fi
+            # Loop until we get a non-empty token
+            duck_token=""
+            while [[ -z "$duck_token" ]]; do
+                read -rp "Enter DuckDNS Token: " duck_token
+                # Trim whitespace
+                duck_token=$(echo "$duck_token" | xargs)
+                if [[ -z "$duck_token" ]]; then
+                    warn "Token cannot be empty, please re-enter"
+                fi
+            done
             
             # ??updateDomain
             local RESULT=$(curl -s "https://www.duckdns.org/update?domains=$DUCK_DOMAIN&token=$duck_token&ip=$PUBLIC_IP")
@@ -318,7 +336,7 @@ setup_duckdns_auto() {
                 warn "If domain does not exist, DuckDNS will auto-create"
             fi
             
-            # saveconfig
+            # saveConfiguring
             cat > "$CONFIG_DIR/ddns.conf" <<EOF
 DDNS_PROVIDER=duckdns
 DUCK_TOKEN=$duck_token
@@ -347,7 +365,7 @@ EOF
             echo -e "${CYAN}Token:${NC} $duck_token"
             echo -e "${CYAN}IP:${NC} $PUBLIC_IP"
             echo ""
-            log "Auto-update cron job added (every 5minutes)"
+            log "Auto-update cron job added (every 5 min)"
             ;;
         2)
             echo ""
@@ -364,25 +382,25 @@ EOF
                 xdg-open "https://www.duckdns.org" 2>/dev/null || true
             fi
             
-            read -rp "?back???back DuckDNS ?ple..."
+            read -rp "?back??Back DuckDNS ?ple..."
             setup_duckdns_auto
             return
             ;;
         3)
             echo ""
-            info "usePublic IPdirectaccess..."
+            info "Using public IP direct access..."
             echo ""
             echo -e "${GREEN}========================================${NC}"
-            echo -e "${GREEN}           service???Info${NC}"
+            echo -e "${GREEN}           Server Network Info${NC}"
             echo -e "${GREEN}========================================${NC}"
             echo ""
-            echo -e "${CYAN}IPv4 ??:${NC} $PUBLIC_IP"
+            echo -e "${CYAN}IPv4 Address:${NC} $PUBLIC_IP"
             echo ""
             echo -e "${YELLOW}Tip:${NC} Shadowsocks or Hysteria2 can use this IP directly"
             echo ""
             ;;
         *)
-            warn "no-brainer?select"
+            warn "Invalid choice"
             sleep 2
             setup_duckdns_auto
             return
@@ -390,20 +408,31 @@ EOF
     esac
     
     echo ""
-    read -rp "?back????..."
+    read -rp "Press Enter to continue..."
 }
 
-# DuckDNS - ??config（al?Token）
+# DuckDNS - ??Configuring（al?Token）
 setup_duckdns() {
     echo ""
-    info "DuckDNS config"
+    info "DuckDNS Setup"
     echo "----------------------------------------"
-    read -rp "requestout? DuckDNS Token: " duck_token
-    read -rp "requestout?subDomain (e.g.: myvps): " duck_domain
+    duck_token=""
+    while [[ -z "$duck_token" ]]; do
+        read -rp "Enter DuckDNS Token: " duck_token
+        duck_token=$(echo "$duck_token" | xargs)
+        if [[ -z "$duck_token" ]]; then
+            warn "Token cannot be empty, please re-enter"
+        fi
+    done
     
-    if [[ -z "$duck_token" || -z "$duck_domain" ]]; then
-        error "Token ?Domainnottion?empty"
-    fi
+    duck_domain=""
+    while [[ -z "$duck_domain" ]]; do
+        read -rp "Enter subdomain (e.g.: myvps): " duck_domain
+        duck_domain=$(echo "$duck_domain" | xargs)
+        if [[ -z "$duck_domain" ]]; then
+            warn "Subdomain cannot be empty, please re-enter"
+        fi
+    done
     
     DDNS_DOMAIN="${duck_domain}.duckdns.org"
     PUBLIC_IP=$(curl -s -4 https://api.ipify.org)
@@ -431,22 +460,41 @@ EOF
     
     log "DuckDNS configured! Domain: $DDNS_DOMAIN"
     echo ""
-    read -rp "?back????..."
+    read -rp "Press Enter to continue..."
 }
 
 # No-IP
 setup_noip() {
     echo ""
-    info "No-IP config"
+    info "No-IP Setup"
     echo "----------------------------------------"
-    read -rp "requestout? No-IP ?: " noip_user
-    read -rsp "requestout? No-IP ??: " noip_pass
-    echo ""
-    read -rp "requestout??dom (e.g.: myvps.ddns.net): " noip_host
+    noip_user=""
+    while [[ -z "$noip_user" ]]; do
+        read -rp "Enter No-IP username: " noip_user
+        noip_user=$(echo "$noip_user" | xargs)
+        if [[ -z "$noip_user" ]]; then
+            warn "Username cannot be empty, please re-enter"
+        fi
+    done
     
-    if [[ -z "$noip_user" || -z "$noip_pass" || -z "$noip_host" ]]; then
-        error "?????nottion?empty"
-    fi
+    noip_pass=""
+    while [[ -z "$noip_pass" ]]; do
+        read -rsp "Enter No-IP password: " noip_pass
+        echo ""
+        noip_pass=$(echo "$noip_pass" | xargs)
+        if [[ -z "$noip_pass" ]]; then
+            warn "Password cannot be empty, please re-enter"
+        fi
+    done
+    
+    noip_host=""
+    while [[ -z "$noip_host" ]]; do
+        read -rp "Enter hostname (e.g.: myvps.ddns.net): " noip_host
+        noip_host=$(echo "$noip_host" | xargs)
+        if [[ -z "$noip_host" ]]; then
+            warn "Hostname cannot be empty, please re-enter"
+        fi
+    done
     
     DDNS_DOMAIN="$noip_host"
     PUBLIC_IP=$(curl -s -4 https://api.ipify.org)
@@ -473,29 +521,29 @@ EOF
     
     (crontab -l 2>/dev/null | grep -v "update-ddns"; echo "*/5 * * * * $CONFIG_DIR/update-ddns.sh >/dev/null 2>&1") | crontab -
     
-    log "No-IP configcomerate! Domain: $DDNS_DOMAIN"
+    log "No-IP SetupComplete! Domain: $DDNS_DOMAIN"
     echo ""
-    read -rp "?back????..."
+    read -rp "Press Enter to continue..."
 }
 
-# get?out?Domain
+# Get or enter domain
 get_domain() {
     local PROTOCOL_NAME=$1
     local NEED_DOMAIN=${2:-"yes"}
     
-    # ???notneedDomain，direct?backIP
+    # If no domain needed, return IP directly
     if [[ "$NEED_DOMAIN" == "no" ]]; then
         local SERVER_IP=$(curl -s -4 https://api.ipify.org)
         echo "$SERVER_IP"
         return 0
     fi
     
-    # deteck??al?DDNSconfig
+    # Check existing DDNS config
     if [[ -f "$CONFIG_DIR/ddns.conf" ]]; then
         source "$CONFIG_DIR/ddns.conf"
         if [[ -n "$DDNS_DOMAIN" ]]; then
-            echo -e "${GREEN}detecttoalconfigDomain: $DDNS_DOMAIN${NC}"
-            read -rp "use?Domain? [Y/n]: " use_existing
+            echo -e "${GREEN}Detected configured domain: $DDNS_DOMAIN${NC}"
+            read -rp "Use this domain? [Y/n]: " use_existing
             if [[ ! "$use_existing" =~ ^[Nn]$ ]]; then
                 echo "$DDNS_DOMAIN"
                 return 0
@@ -503,66 +551,69 @@ get_domain() {
         fi
     fi
     
-    # viderselect
+    # Provide options
     echo ""
-    echo -e "${YELLOW}requestselectDomain??:${NC}"
+    echo -e "${YELLOW}Select domain source:${NC}"
     echo "  1. Auto-Apply DuckDNS (easiest)"
-    echo "  2. use???Domain"
-    echo "  3. ?back???"
+    echo "  2. Use your own domain"
+    echo "  3. Go back"
     echo ""
     read -rp "requestselect [1-3]: " domain_choice
     
     case $domain_choice in
         1)
-            setup_scritch
+            setup_duckdns_auto
             if [[ -n "$DDNS_DOMAIN" ]]; then
                 echo "$DDNS_DOMAIN"
                 return 0
             else
-                error "Domainapplyrequestfail"
+                error "Domain application failed"
             fi
             ;;
         2)
-            read -rp "requestout???Domain: " custom_domain
-            if [[ -n "$custom_domain" ]]; then
-                echo "$custom_domain"
-                return 0
-            else
-                error "Domainnottion?empty"
-            fi
+            custom_domain=""
+            while [[ -z "$custom_domain" ]]; do
+                read -rp "Enter your domain: " custom_domain
+                custom_domain=$(echo "$custom_domain" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+                if [[ -z "$custom_domain" ]]; then
+                    warn "Domain cannot be empty, please re-enter"
+                fi
+            done
+            echo "$custom_domain"
+            return 0
             ;;
         3)
             return 1
             ;;
         *)
-            error "no-brainer?select"
+            error "Invalid choice"
             ;;
     esac
 }
 
-# ==================== WARP Function ====================
+# ==================== WARP Features ====================
 
 setup_warp() {
     clear
     echo ""
     echo -e "${CYAN}============================================================${NC}"
-    echo -e "${CYAN}                      WARP ??config${NC}"
+    echo -e "${CYAN}                      WARP Setup${NC}"
     echo -e "${CYAN}============================================================${NC}"
     echo ""
     
     if command -v warp-cli &>/dev/null; then
-        info "WARP alinstalled"
+        info "WARP already installed"
         echo ""
-        echo "  1. ?? WARP"
-        echo "  2. stopped WARP"
-        echo "  3. eck???"
-        echo "  4. ?? WARP"
-        echo "  5. ?back??ple"
+        echo "  1. Start WARP"
+        echo "  2. Stop WARP"
+        echo "  3. Check status"
+        echo "  4. Uninstall WARP"
+        echo "  5. Back??ple"
         echo ""
         read -rp "requestselect [1-5]: " warp_choice
         
         case $warp_choice in
-            1) warp-cli connect; log "WARP al??" ;;
+            1) warp-cli connect; log "WARP alStarting" ;;
             2) warp-cli disconnect; log "WARP alstopped" ;;
             3) warp-cli status ;;
             4) uninstall_warp ;;
@@ -571,10 +622,10 @@ setup_warp() {
         return
     fi
     
-    echo -e "${YELLOW}requestselectinstalledso?:${NC}"
-    echo "  1. ?so Cloudflare WARP (Recommended)"
-    echo "  2. WireGuard ?? (wgcf)"
-    echo "  3. ?back??ple"
+    echo -e "${YELLOW}Select installation method:${NC}"
+    echo "  1. Official Cloudflare WARP (Recommended)"
+    echo "  2. WireGuard mode (wgcf)"
+    echo "  3. Back??ple"
     echo ""
     read -rp "requestselect [1-3]: " warp_install_choice
     
@@ -582,12 +633,12 @@ setup_warp() {
         1) install_warp_official ;;
         2) install_warp_wgcf ;;
         3) return ;;
-        *) warn "no-brainer?select"; sleep 2; setup_warp ;;
+        *) warn "Invalid choice"; sleep 2; setup_warp ;;
     esac
 }
 
 install_warp_official() {
-    log "ininginstalled Cloudflare WARP..."
+    log "Installing Cloudflare WARP..."
     
     if [[ "$PKG_MANAGER" == "apt" ]]; then
         curl -s https://pkg.cloudflareclient.com/pubkey.gpg | gpg --yes --dearmor --output /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
@@ -602,15 +653,15 @@ install_warp_official() {
     warp-cli connect
     warp-cli set-mode warp
     
-    log "WARP installed???erateFunc!"
+    log "WARP installed and started!"
     warp-cli status
     
     echo ""
-    read -rp "?back????..."
+    read -rp "Press Enter to continue..."
 }
 
 install_warp_wgcf() {
-    log "ininginstalled wgcf (WireGuard WARP)..."
+    log "Installing wgcf (WireGuard WARP)..."
     
     if [[ "$PKG_MANAGER" == "apt" ]]; then
         apt-get install -y wireguard wireguard-tools
@@ -631,14 +682,14 @@ install_warp_wgcf() {
     systemctl enable wg-quick@warp
     systemctl start wg-quick@warp
     
-    log "wgcf WARP installederateFunc!"
+    log "wgcf WARP installed!"
     
     echo ""
-    read -rp "?back????..."
+    read -rp "Press Enter to continue..."
 }
 
 uninstall_warp() {
-    log "ining?? WARP..."
+    log "Uninstalling WARP..."
     systemctl stop warp-svc 2>/dev/null || true
     systemctl disable warp-svc 2>/dev/null || true
     
@@ -648,25 +699,25 @@ uninstall_warp() {
         $PKG_MANAGER remove -y cloudflare-warp
     fi
     
-    log "WARP al??"
+    log "WARP uninstalled"
     echo ""
-    read -rp "?back????..."
+    read -rp "Press Enter to continue..."
 }
 
-# ==================== Xray ??installed ====================
+# ==================== Xray Coreinstalled ====================
 
 install_xray() {
     if command -v xray &>/dev/null; then
-        log "Xray alinstalled，Version: $(xray version | head -n1)"
+        log "Xray already installed, version: $(xray version | head -n1)"
         return 0
     fi
     
-    log "ininginstalled Xray ??..."
+    log "Installing Xray core..."
     
     bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
     
     systemctl enable xray
-    log "Xray installedcomerate"
+    log "Xray installed"
 }
 
 # ==================== Vless installed (needDomain) ====================
@@ -675,7 +726,7 @@ install_vless() {
     clear
     echo ""
     echo -e "${CYAN}============================================================${NC}"
-    echo -e "${CYAN}                    Vless + Reality installed${NC}"
+    echo -e "${CYAN}                    Vless + Reality Install${NC}"
     echo -e "${CYAN}============================================================${NC}"
     echo ""
     
@@ -690,7 +741,7 @@ install_vless() {
     local PUBLIC_KEY=$(xray x25519 -i "$PRIVATE_KEY" | grep "Public key:" | awk '{print $3}')
     local SHORT_ID=$(openssl rand -hex 4)
     
-    log "iningapplyrequest SSL cert..."
+    log "Applying for SSL certificate..."
     
     if [[ ! -f ~/.acme.sh/acme.sh ]]; then
         curl https://get.acme.sh | sh
@@ -774,14 +825,14 @@ EOF
     systemctl restart xray
     
     cat > "$CONFIG_DIR/vless-info.txt" <<EOF
-========== Vless configInfo ==========
-??: Vless + Reality
-service???: $DOMAIN
-??: $PORT
+========== Vless ConfigInfo ==========
+Protocol: Vless + Reality
+Server: $DOMAIN
+Port: $PORT
 UUID: $UUID
-??: xtls-rprx-vision
-?out??: tcp
-instGlo: reality
+Flow: xtls-rprx-vision
+Network: tcp
+Security: reality
 Public Key: $PUBLIC_KEY
 Short ID: $SHORT_ID
 SNI: www.cloudflare.com
@@ -801,39 +852,39 @@ EOF
     
     clear
     echo -e "${GREEN}========================================${NC}"
-    echo -e "${GREEN}      Vless installederateFunc!${NC}"
+    echo -e "${GREEN}      Vless installed!${NC}"
     echo -e "${GREEN}========================================${NC}"
     echo ""
     cat "$CONFIG_DIR/vless-info.txt"
     echo ""
-    echo -e "${CYAN}min??rect:${NC}"
+    echo -e "${CYAN}Share link:${NC}"
     echo "$VLESS_LINK"
     echo ""
     
     if [[ -f "$CONFIG_DIR/vless-qr.png" ]]; then
-        echo -e "${CYAN}???alsave?: $CONFIG_DIR/vless-qr.png${NC}"
+        echo -e "${CYAN}QR saved to: $CONFIG_DIR/vless-qr.png${NC}"
     fi
     
     echo ""
-    log "Vless installedcomerate!"
+    log "Vless installation complete!"
     echo ""
-    read -rp "?back????..."
+    read -rp "Press Enter to continue..."
 }
 
-# ==================== Hysteria2 installed (needDomain) ====================
+# ==================== Hysteria2 Install (needDomain) ====================
 
 install_hysteria2() {
     clear
     echo ""
     echo -e "${CYAN}============================================================${NC}"
-    echo -e "${CYAN}                      Hysteria2 installed${NC}"
+    echo -e "${CYAN}                      Hysteria2 Install${NC}"
     echo -e "${CYAN}============================================================${NC}"
     echo ""
     
     local DOMAIN=$(get_domain "Hysteria2")
     if [[ $? -ne 0 ]]; then return; fi
     
-    log "ininginstalled Hysteria2..."
+    log "Installing Hysteria2..."
     
     bash <(curl -fsSL https://get.hy2.sh/)
     
@@ -876,12 +927,12 @@ EOF
     systemctl restart hysteria-server
     
     cat > "$CONFIG_DIR/hysteria2-info.txt" <<EOF
-========== Hysteria2 configInfo ==========
-service???: $DOMAIN
-??: $PORT
-??: $PASSWORD
-?out??: udp
-TLS: ??cert
+========== Hysteria2 ConfigInfo ==========
+Server: $DOMAIN
+Port: $PORT
+Password: $PASSWORD
+Network: udp
+TLS: self-signed
 SNI: $DOMAIN
 =======================================
 EOF
@@ -896,36 +947,36 @@ EOF
     
     clear
     echo -e "${GREEN}========================================${NC}"
-    echo -e "${GREEN}      Hysteria2 installederateFunc!${NC}"
+    echo -e "${GREEN}      Hysteria2 installed!${NC}"
     echo -e "${GREEN}========================================${NC}"
     echo ""
     cat "$CONFIG_DIR/hysteria2-info.txt"
     echo ""
-    echo -e "${CYAN}min??rect:${NC}"
+    echo -e "${CYAN}Share link:${NC}"
     echo "$HY2_LINK"
     echo ""
     
     if [[ -f "$CONFIG_DIR/hysteria2-qr.png" ]]; then
-        echo -e "${CYAN}???alsave?: $CONFIG_DIR/hysteria2-qr.png${NC}"
+        echo -e "${CYAN}QR saved to: $CONFIG_DIR/hysteria2-qr.png${NC}"
     fi
     
     echo ""
-    log "Hysteria2 installedcomerate!"
+    log "Hysteria2 installation complete!"
     echo ""
-    read -rp "?back????..."
+    read -rp "Press Enter to continue..."
 }
 
-# ==================== Shadowsocks installed (notneedDomain) ====================
+# ==================== Shadowsocks Install (notneedDomain) ====================
 
 install_shadowsocks() {
     clear
     echo ""
     echo -e "${CYAN}============================================================${NC}"
-    echo -e "${CYAN}                    Shadowsocks installed${NC}"
+    echo -e "${CYAN}                    Shadowsocks Install${NC}"
     echo -e "${CYAN}============================================================${NC}"
     echo ""
     
-    log "ininginstalled Shadowsocks..."
+    log "Installing Shadowsocks..."
     
     if [[ "$PKG_MANAGER" == "apt" ]]; then
         apt-get install -y shadowsocks-libev
@@ -955,11 +1006,11 @@ EOF
     systemctl restart shadowsocks-libev
     
     cat > "$CONFIG_DIR/ss-info.txt" <<EOF
-========== Shadowsocks configInfo ==========
-service???: $SERVER_IP
-??: $PORT
-??: $PASSWORD
-d?so?: $METHOD
+========== Shadowsocks ConfigInfo ==========
+Server: $SERVER_IP
+Port: $PORT
+Password: $PASSWORD
+Method: $METHOD
 =========================================
 EOF
     
@@ -973,18 +1024,18 @@ EOF
     
     clear
     echo -e "${GREEN}========================================${NC}"
-    echo -e "${GREEN}      Shadowsocks installederateFunc!${NC}"
+    echo -e "${GREEN}      Shadowsocks installed!${NC}"
     echo -e "${GREEN}========================================${NC}"
     echo ""
     cat "$CONFIG_DIR/ss-info.txt"
     echo ""
-    echo -e "${CYAN}min??rect:${NC}"
+    echo -e "${CYAN}Share link:${NC}"
     echo "$SS_LINK"
     echo ""
     
-    log "Shadowsocks installedcomerate!"
+    log "Shadowsocks installation complete!"
     echo ""
-    read -rp "?back????..."
+    read -rp "Press Enter to continue..."
 }
 
 # ==================== VMess installed (needDomain) ====================
@@ -993,7 +1044,7 @@ install_vmess() {
     clear
     echo ""
     echo -e "${CYAN}============================================================${NC}"
-    echo -e "${CYAN}                    VMess + WebSocket installed${NC}"
+    echo -e "${CYAN}                    VMess + WebSocket Install${NC}"
     echo -e "${CYAN}============================================================${NC}"
     echo ""
     
@@ -1006,7 +1057,7 @@ install_vmess() {
     local UUID=$(xray uuid)
     local WS_PATH="/$(openssl rand -hex 8)"
     
-    log "iningapplyrequest SSL cert..."
+    log "Applying for SSL certificate..."
     
     if [[ ! -f ~/.acme.sh/acme.sh ]]; then
         curl https://get.acme.sh | sh
@@ -1067,14 +1118,14 @@ EOF
     systemctl restart xray
     
     cat > "$CONFIG_DIR/vmess-info.txt" <<EOF
-========== VMess configInfo ==========
-service???: $DOMAIN
-??: $PORT
+========== VMess ConfigInfo ==========
+Server: $DOMAIN
+Port: $PORT
 UUID: $UUID
-??ID: 0
-?out??: ws
-WebSocket??: $WS_PATH
-TLS: ?
+AlterID: 0
+Network: ws
+WebSocket Path: $WS_PATH
+TLS: enabled
 ====================================
 EOF
     
@@ -1089,18 +1140,18 @@ EOF
     
     clear
     echo -e "${GREEN}========================================${NC}"
-    echo -e "${GREEN}      VMess installederateFunc!${NC}"
+    echo -e "${GREEN}      VMess installed!${NC}"
     echo -e "${GREEN}========================================${NC}"
     echo ""
     cat "$CONFIG_DIR/vmess-info.txt"
     echo ""
-    echo -e "${CYAN}min??rect:${NC}"
+    echo -e "${CYAN}Share link:${NC}"
     echo "$VMESS_LINK"
     echo ""
     
-    log "VMess installedcomerate!"
+    log "VMess installation complete!"
     echo ""
-    read -rp "?back????..."
+    read -rp "Press Enter to continue..."
 }
 
 # ==================== Trojan installed (needDomain) ====================
@@ -1109,14 +1160,14 @@ install_trojan() {
     clear
     echo ""
     echo -e "${CYAN}============================================================${NC}"
-    echo -e "${CYAN}                    Trojan + WebSocket installed${NC}"
+    echo -e "${CYAN}                    Trojan + WebSocket Install${NC}"
     echo -e "${CYAN}============================================================${NC}"
     echo ""
     
     local DOMAIN=$(get_domain "Trojan")
     if [[ $? -ne 0 ]]; then return; fi
     
-    log "ininginstalled Trojan..."
+    log "Installing Trojan..."
     
     local TROJAN_VERSION=$(curl -s https://api.github.com/repos/p4gefau1t/trojan-go/releases/latest | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')
     wget -qO /tmp/trojan-go.tar.gz "https://github.com/p4gefau1t/trojan-go/releases/download/${TROJAN_VERSION}/trojan-go-linux-amd64.zip"
@@ -1131,7 +1182,7 @@ install_trojan() {
     local PASSWORD=$(openssl rand -base64 16)
     local WS_PATH="/$(openssl rand -hex 8)"
     
-    log "iningapplyrequest SSL cert..."
+    log "Applying for SSL certificate..."
     
     if [[ ! -f ~/.acme.sh/acme.sh ]]; then
         curl https://get.acme.sh | sh
@@ -1187,13 +1238,13 @@ EOF
     systemctl restart trojan-go
     
     cat > "$CONFIG_DIR/trojan-info.txt" <<EOF
-========== Trojan configInfo ==========
-service???: $DOMAIN
-??: $PORT
-??: $PASSWORD
-?out??: websocket
-WebSocket??: $WS_PATH
-TLS: ?
+========== Trojan ConfigInfo ==========
+Server: $DOMAIN
+Port: $PORT
+Password: $PASSWORD
+Network: websocket
+WebSocket Path: $WS_PATH
+TLS: enabled
 SNI: $DOMAIN
 =====================================
 EOF
@@ -1208,106 +1259,106 @@ EOF
     
     clear
     echo -e "${GREEN}========================================${NC}"
-    echo -e "${GREEN}      Trojan installederateFunc!${NC}"
+    echo -e "${GREEN}      Trojan installed!${NC}"
     echo -e "${GREEN}========================================${NC}"
     echo ""
     cat "$CONFIG_DIR/trojan-info.txt"
     echo ""
-    echo -e "${CYAN}min??rect:${NC}"
+    echo -e "${CYAN}Share link:${NC}"
     echo "$TROJAN_LINK"
     echo ""
     
-    log "Trojan installedcomerate!"
+    log "Trojan installation complete!"
     echo ""
-    read -rp "?back????..."
+    read -rp "Press Enter to continue..."
 }
 
-# ==================== eck?config ====================
+# ==================== eck?Configuring ====================
 
 view_config() {
     clear
     echo ""
     echo -e "${CYAN}============================================================${NC}"
-    echo -e "${CYAN}                    eck?alinstalledserviceconfig${NC}"
+    echo -e "${CYAN}                    View Configurations${NC}"
     echo -e "${CYAN}============================================================${NC}"
     echo ""
     
     if [[ -f "$CONFIG_DIR/vless-info.txt" ]]; then
-        echo -e "${GREEN}[Vless config]${NC}"
+        echo -e "${GREEN}[Vless Config]${NC}"
         cat "$CONFIG_DIR/vless-info.txt"
         echo ""
-        echo -e "${CYAN}min??rect:${NC}"
+        echo -e "${CYAN}Share link:${NC}"
         cat "$CONFIG_DIR/vless-link.txt"
         echo ""
         echo "----------------------------------------"
     fi
     
     if [[ -f "$CONFIG_DIR/hysteria2-info.txt" ]]; then
-        echo -e "${GREEN}[Hysteria2 config]${NC}"
+        echo -e "${GREEN}[Hysteria2 Config]${NC}"
         cat "$CONFIG_DIR/hysteria2-info.txt"
         echo ""
-        echo -e "${CYAN}min??rect:${NC}"
+        echo -e "${CYAN}Share link:${NC}"
         cat "$CONFIG_DIR/hysteria2-link.txt"
         echo ""
         echo "----------------------------------------"
     fi
     
     if [[ -f "$CONFIG_DIR/ss-info.txt" ]]; then
-        echo -e "${GREEN}[Shadowsocks config]${NC}"
+        echo -e "${GREEN}[Shadowsocks Config]${NC}"
         cat "$CONFIG_DIR/ss-info.txt"
         echo ""
-        echo -e "${CYAN}min??rect:${NC}"
+        echo -e "${CYAN}Share link:${NC}"
         cat "$CONFIG_DIR/ss-link.txt"
         echo ""
         echo "----------------------------------------"
     fi
     
     if [[ -f "$CONFIG_DIR/vmess-info.txt" ]]; then
-        echo -e "${GREEN}[VMess config]${NC}"
+        echo -e "${GREEN}[VMess Config]${NC}"
         cat "$CONFIG_DIR/vmess-info.txt"
         echo ""
-        echo -e "${CYAN}min??rect:${NC}"
+        echo -e "${CYAN}Share link:${NC}"
         cat "$CONFIG_DIR/vmess-link.txt"
         echo ""
         echo "----------------------------------------"
     fi
     
     if [[ -f "$CONFIG_DIR/trojan-info.txt" ]]; then
-        echo -e "${GREEN}[Trojan config]${NC}"
+        echo -e "${GREEN}[Trojan Config]${NC}"
         cat "$CONFIG_DIR/trojan-info.txt"
         echo ""
-        echo -e "${CYAN}min??rect:${NC}"
+        echo -e "${CYAN}Share link:${NC}"
         cat "$CONFIG_DIR/trojan-link.txt"
         echo ""
         echo "----------------------------------------"
     fi
     
     if [[ -f "$CONFIG_DIR/ddns.conf" ]]; then
-        echo -e "${GREEN}[DDNS config]${NC}"
+        echo -e "${GREEN}[DDNS Config]${NC}"
         cat "$CONFIG_DIR/ddns.conf"
         echo ""
     fi
     
     echo ""
-    read -rp "?back????..."
+    read -rp "Press Enter to continue..."
 }
 
-# ==================== ??service ====================
+# ==================== Uninstall Service ====================
 
 uninstall_service() {
     clear
     echo ""
     echo -e "${CYAN}============================================================${NC}"
-    echo -e "${CYAN}                        ??service${NC}"
+    echo -e "${CYAN}                        Uninstall Service${NC}"
     echo -e "${CYAN}============================================================${NC}"
     echo ""
-    echo "  1. ?? Vless"
-    echo "  2. ?? Hysteria2"
-    echo "  3. ?? Shadowsocks"
-    echo "  4. ?? VMess"
-    echo "  5. ?? Trojan"
-    echo "  6. ????service"
-    echo "  7. ?back??ple"
+    echo "  1. Uninstall Vless"
+    echo "  2. Uninstall Hysteria2"
+    echo "  3. Uninstall Shadowsocks"
+    echo "  4. Uninstall VMess"
+    echo "  5. Uninstall Trojan"
+    echo "  6. Uninstall All"
+    echo "  7. Back??ple"
     echo ""
     read -rp "requestselect [1-7]: " uninstall_choice
     
@@ -1317,7 +1368,7 @@ uninstall_service() {
             systemctl disable xray 2>/dev/null || true
             rm -f /usr/local/etc/xray/config.json
             rm -f "$CONFIG_DIR"/vless-*
-            log "Vless al??"
+            log "Vless uninstalled"
             ;;
         2)
             systemctl stop hysteria-server 2>/dev/null || true
@@ -1325,20 +1376,20 @@ uninstall_service() {
             rm -rf /etc/hysteria
             rm -f /usr/local/bin/hysteria
             rm -f "$CONFIG_DIR"/hysteria2-*
-            log "Hysteria2 al??"
+            log "Hysteria2 uninstalled"
             ;;
         3)
             systemctl stop shadowsocks-libev 2>/dev/null || true
             systemctl disable shadowsocks-libev 2>/dev/null || true
             rm -f "$CONFIG_DIR"/ss-*
-            log "Shadowsocks al??"
+            log "Shadowsocks uninstalled"
             ;;
         4)
             systemctl stop xray 2>/dev/null || true
             systemctl disable xray 2>/dev/null || true
             rm -f /usr/local/etc/xray/vmess.json
             rm -f "$CONFIG_DIR"/vmess-*
-            log "VMess al??"
+            log "VMess uninstalled"
             ;;
         5)
             systemctl stop trojan-go 2>/dev/null || true
@@ -1346,7 +1397,7 @@ uninstall_service() {
             rm -rf /etc/trojan
             rm -f /usr/local/bin/trojan-go
             rm -f "$CONFIG_DIR"/trojan-*
-            log "Trojan al??"
+            log "Trojan uninstalled"
             ;;
         6)
             systemctl stop xray hysteria-server shadowsocks-libev trojan-go 2>/dev/null || true
@@ -1354,13 +1405,13 @@ uninstall_service() {
             rm -rf /usr/local/etc/xray /etc/hysteria /etc/trojan
             rm -f /usr/local/bin/xray /usr/local/bin/hysteria /usr/local/bin/trojan-go
             rm -f "$CONFIG_DIR"/*-info.txt "$CONFIG_DIR"/*-link.txt "$CONFIG_DIR"/*-qr.png
-            log "??serviceal??"
+            log "All services uninstalled"
             ;;
         7) return ;;
     esac
     
     echo ""
-    read -rp "?back????..."
+    read -rp "Press Enter to continue..."
 }
 
 # ==================== ??ple ====================
@@ -1368,7 +1419,7 @@ uninstall_service() {
 show_banner() {
     echo ""
     echo -e "${CYAN}============================================================${NC}"
-    echo -e "${GREEN}           VPS Toolbox - ?Function?????? v2.0.0${NC}"
+    echo -e "${GREEN}           VPS Toolbox - ?Features?????? v2.0.0${NC}"
     echo -e "${CYAN}============================================================${NC}"
     echo -e "  ${YELLOW}Author${NC}: Kitaro-Loked"
     echo -e "  ${YELLOW}Repo${NC}: https://github.com/Kitaro-Loked/VPS-Toolbox"
@@ -1379,21 +1430,21 @@ show_banner() {
 show_menu() {
     clear
     show_banner
-    echo -e "  ${YELLOW}[DDNS & ??]${NC}"
-    echo "    1. DDNS Domainapplyrequestandmanage (????)"
-    echo "    2. WARP ??config"
+    echo -e "  ${YELLOW}[DDNS & Network]${NC}"
+    echo "    1. DDNS Setup (Auto-renew)"
+    echo "    2. WARP Setup"
     echo ""
-    echo -e "  ${YELLOW}[???]${NC}"
-    echo "    3. installed Vless + Reality (needDomain)"
-    echo "    4. installed Hysteria2 (needDomain)"
-    echo "    5. installed Shadowsocks (no-brainerneedDomain)"
-    echo "    6. installed VMess + WebSocket (needDomain)"
-    echo "    7. installed Trojan + WebSocket (needDomain)"
+    echo -e "  ${YELLOW}[Proxy Protocols]${NC}"
+    echo "    3. Install Vless + Reality (needs domain)"
+    echo "    4. Install Hysteria2 (needs domain)"
+    echo "    5. Install Shadowsocks (no domain needed)"
+    echo "    6. Install VMess + WebSocket (needs domain)"
+    echo "    7. Install Trojan + WebSocket (needs domain)"
     echo ""
-    echo -e "  ${YELLOW}[manage]${NC}"
-    echo "    8. eck???config"
-    echo "    9. ??service"
-    echo "    0. ?putscrision"
+    echo -e "  ${YELLOW}[Management]${NC}"
+    echo "    8. View All Configs"
+    echo "    9. Uninstall Service"
+    echo "    0. Exit"
     echo ""
     echo -e "${CYAN}============================================================${NC}"
     echo ""
@@ -1406,7 +1457,7 @@ main() {
     
     while true; do
         show_menu
-        read -rp "requestselect?Au [0-9]: " choice
+        read -rp "Select operation [0-9]: " choice
         
         case $choice in
             1) setup_ddns ;;
@@ -1419,11 +1470,11 @@ main() {
             8) view_config ;;
             9) uninstall_service ;;
             0)
-                echo -e "${GREEN}??use VPS Toolbox，??!${NC}"
+                echo -e "${GREEN}Thanks for using VPS Toolbox, goodbye!${NC}"
                 exit 0
                 ;;
             *)
-                warn "no-brainer?select，request?dateout?"
+                warn "Invalid choice, please try again"
                 sleep 1
                 ;;
         esac
