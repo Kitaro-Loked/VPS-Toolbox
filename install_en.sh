@@ -2,11 +2,11 @@
 # Auto-fix CRLF: convert Windows line endings if present
 sed -i "s/\r$//" "$0" 2>/dev/null || true
 # ============================================================
-# VPS Toolbox - One-Click Deployment
+# VPS Toolbox - One-Click Deploy Script
 # Features: DDNS/WARP/Vless/Hysteria2/SS/VMess/Trojan
 # Author: Kitaro-Loked
 # Repo: https://github.com/Kitaro-Loked/VPS-Toolbox
-# Version: 2.2.0
+# Version: 2.3.0
 # ============================================================
 
 set -e
@@ -26,7 +26,7 @@ DDNS_DOMAIN=""
 DDNS_PROVIDER=""
 DDNS_PASS=""
 
-# 日志函数
+# Log Functions
 log() {
     echo -e "${GREEN}[$(date '+%Y-%m-%d %H:%M:%S')] $1${NC}" | tee -a "$LOG_FILE"
 }
@@ -44,21 +44,21 @@ info() {
     echo -e "${BLUE}[INFO] $1${NC}"
 }
 
-# 检查root权限
+# Check Root
 check_root() {
     if [[ $EUID -ne 0 ]]; then
         error "Please run as root"
     fi
 }
 
-# 检查系统类型
+# Check System
 check_system() {
     if [[ -f /etc/os-release ]]; then
         . /etc/os-release
         OS=$NAME
         VER=$VERSION_ID
     else
-        error "无法检测操作系统类型"
+        error "Cannot detect OS"
     fi
     
     case $OS in
@@ -72,22 +72,22 @@ check_system() {
             PKG_MANAGER="dnf"
             ;;
         *)
-            error "不支持的操作系统: $OS"
+            error "Unsupported OS: $OS"
             ;;
     esac
     
-    log "检测到系统: $OS $VER"
+    log "Detected system: $OS $VER"
 }
 
-# 安装依赖
+# Install Dependencies
 install_dependencies() {
-    log "正在安装基础依赖..."
+    log "Installing dependencies..."
     
     if [[ "$PKG_MANAGER" == "apt" ]]; then
         apt-get update -y >/dev/null 2>&1
-        apt-get install -y curl wget git socat jq cron openssl qrencode net-tools unzip >/dev/null 2>&1
+        apt-get install -y curl wget git socat jq cron openssl qrencode net-tools unzip nginx >/dev/null 2>&1
     else
-        $PKG_MANAGER install -y curl wget git socat jq cronie openssl qrencode net-tools unzip >/dev/null 2>&1
+        $PKG_MANAGER install -y curl wget git socat jq cronie openssl qrencode net-tools unzip nginx >/dev/null 2>&1
     fi
     
     systemctl enable cron >/dev/null 2>&1 || systemctl enable crond >/dev/null 2>&1
@@ -95,7 +95,38 @@ install_dependencies() {
     
     mkdir -p "$CONFIG_DIR"
     
-    log "基础Dependencies installed"
+    log "Dependencies installed"
+}
+
+# Port Check
+check_port() {
+    local PORT=$1
+    if command -v ss &>/dev/null; then
+        if ss -tlnp | grep -q ":$PORT "; then
+            return 1
+        fi
+    elif command -v netstat &>/dev/null; then
+        if netstat -tlnp 2>/dev/null | grep -q ":$PORT "; then
+            return 1
+        fi
+    fi
+    return 0
+}
+
+# Check Web Ports（用于Nginx/Caddy）
+check_web_ports() {
+    local OCCUPIED=""
+    if command -v ss &>/dev/null; then
+        OCCUPIED=$(ss -tlnp | grep -E ':80 |:443 ')
+    elif command -v netstat &>/dev/null; then
+        OCCUPIED=$(netstat -tlnp 2>/dev/null | grep -E ':80 |:443 ')
+    fi
+    if [[ -n "$OCCUPIED" ]]; then
+        warn "Port 80/443 occupied"
+        echo "$OCCUPIED"
+        return 1
+    fi
+    return 0
 }
 
 # ==================== DDNS 功能 ====================
@@ -117,7 +148,7 @@ setup_ddns() {
     echo ""
     echo "  3. Cloudflare (已有域名)"
     echo "  4. No-IP (已有账号)"
-    echo "  5. Back to main menu"
+    echo "  5. Back to Main Menu"
     echo ""
     read -rp "Select [1-5]: " ddns_choice
     
@@ -158,7 +189,7 @@ show_public_ip() {
     echo "  2. Cloudflare (最稳定)"
     echo "  3. 返回"
     echo ""
-    read -rp "Select [1-3]: " ip_choice
+    read -rp "请选择 [1-3]: " ip_choice
     
     case $ip_choice in
         1) setup_duckdns ;;
@@ -306,14 +337,14 @@ setup_duckdns_auto() {
     # 实际上 DuckDNS 支持用 email 获取 token
     
     echo -e "${YELLOW}DuckDNS Auto-Apply说明:${NC}"
-    echo "  DuckDNS requires a Token。"
-    echo "  Select how to obtain:"
+    echo "  DuckDNS requires Token。"
+    echo "  Select method:"
     echo ""
-    echo "  1. I already have a DuckDNS Token"
-    echo "  2. Open DuckDNS signup page"
-    echo "  3. Use IP directly (no domain)"
+    echo "  1. I have DuckDNS Token"
+    echo "  2. Open DuckDNS signup (获取 Token)"
+    echo "  3. Use temporary solution (IP直接，无需域名)"
     echo ""
-    read -rp "Select [1-3]: " duck_choice
+    read -rp "请选择 [1-3]: " duck_choice
     
     case $duck_choice in
         1)
@@ -328,14 +359,14 @@ setup_duckdns_auto() {
                 fi
             done
             
-            # Updating domain
+            # 尝试更新域名
             local RESULT=$(curl -s "https://www.duckdns.org/update?domains=$DUCK_DOMAIN&token=$duck_token&ip=$PUBLIC_IP")
             
             if [[ "$RESULT" == "OK" ]]; then
-                log "DuckDNS domain updated!"
+                log "DuckDNS 域名更新成功!"
             else
                 warn "Domain update returned: $RESULT"
-                warn "DuckDNS will auto-create if not exists"
+                warn "DuckDNS auto-creates if not exists"
             fi
             
             # Wait for DNS propagation
@@ -345,14 +376,14 @@ setup_duckdns_auto() {
                 sleep 5
                 if host "$DDNS_DOMAIN" >/dev/null 2>&1 || nslookup "$DDNS_DOMAIN" >/dev/null 2>&1; then
                     DNS_READY=1
-                    log "DNS is ready!"
+                    log "DNS ready!"
                     break
                 fi
                 echo -n "."
             done
             echo ""
             if [[ $DNS_READY -eq 0 ]]; then
-                warn "DNS not fully propagated，continuing anyway..."
+                warn "DNS not fully propagated，continuing..."
             fi
             
             # 保存配置
@@ -489,10 +520,10 @@ setup_noip() {
     echo "----------------------------------------"
     noip_user=""
     while [[ -z "$noip_user" ]]; do
-        read -rp "请输入 No-IP 用户名: " noip_user
+        read -rp "请输入 No-IP Username: " noip_user
         noip_user=$(echo "$noip_user" | xargs)
         if [[ -z "$noip_user" ]]; then
-            warn "用户名不能为空，请重新输入"
+            warn "Username不能为空，请重新输入"
         fi
     done
     
@@ -545,12 +576,12 @@ EOF
     read -rp "Press Enter to continue..."
 }
 
-# 获取或输入域名
+# Get Domain
 get_domain() {
     local PROTOCOL_NAME=$1
     local NEED_DOMAIN=${2:-"yes"}
     
-    # If protocol does not need domain, return IP
+    # Return IP if no domain needed
     if [[ "$NEED_DOMAIN" == "no" ]]; then
         local SERVER_IP=$(curl -s -4 https://api.ipify.org)
         echo "$SERVER_IP"
@@ -572,11 +603,11 @@ get_domain() {
     
     # 提供选择
     echo ""
-    echo -e "${YELLOW}Select domain source:${NC}"
+    echo -e "${YELLOW}Select Domain Source:${NC}"
     echo "  1. Auto DuckDNS (Easiest)"
-    echo "  2. Use my own domain"
-    echo "  3. Use IP directly (no domain/cert)"
-    echo "  4. Go back"
+    echo "  2. Use Custom Domain"
+    echo "  3. Use IP Direct (No Domain)"
+    echo "  4. Go Back"
     echo ""
     read -rp "Select [1-4]: " domain_choice
     
@@ -603,7 +634,7 @@ get_domain() {
             return 0
             ;;
         3)
-            # IP direct mode - 返回特殊标记
+            # IP直连模式 - 返回特殊标记
             echo "__IP_DIRECT__"
             return 0
             ;;
@@ -622,7 +653,7 @@ setup_warp() {
     clear
     echo ""
     echo -e "${CYAN}============================================================${NC}"
-    echo -e "${CYAN}                      WARP Configuration${NC}"
+    echo -e "${CYAN}                      WARP Config${NC}"
     echo -e "${CYAN}============================================================${NC}"
     echo ""
     
@@ -633,7 +664,7 @@ setup_warp() {
         echo "  2. 停止 WARP"
         echo "  3. 查看状态"
         echo "  4. 卸载 WARP"
-        echo "  5. Back to main menu"
+        echo "  5. Back to Main Menu"
         echo ""
         read -rp "Select [1-5]: " warp_choice
         
@@ -650,9 +681,9 @@ setup_warp() {
     echo -e "${YELLOW}请选择安装方式:${NC}"
     echo "  1. 官方 Cloudflare WARP (推荐)"
     echo "  2. WireGuard 模式 (wgcf)"
-    echo "  3. Back to main menu"
+    echo "  3. Back to Main Menu"
     echo ""
-    read -rp "Select [1-3]: " warp_install_choice
+    read -rp "请选择 [1-3]: " warp_install_choice
     
     case $warp_install_choice in
         1) install_warp_official ;;
@@ -733,16 +764,16 @@ uninstall_warp() {
 
 install_xray() {
     if command -v xray &>/dev/null; then
-        log "Xray already installed，版本: $(xray version | head -n1)"
+        log "Xray 已安装，Version: $(xray version | head -n1)"
         return 0
     fi
     
-    log "正在安装 Xray 核心..."
+    log "正在Installing Xray core..."
     
     bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
     
     systemctl enable xray
-    log "Xray 安装完成"
+    log "Xray installed"
 }
 
 # ==================== Vless 安装 (需要域名) ====================
@@ -751,22 +782,20 @@ install_vless() {
     clear
     echo ""
     echo -e "${CYAN}============================================================${NC}"
-    echo -e "${CYAN}                    Vless + Reality Installation${NC}"
+    echo -e "${CYAN}                    Vless + Reality Install${NC}"
     echo -e "${CYAN}============================================================${NC}"
     echo ""
     
     local DOMAIN=$(get_domain "Vless")
     if [[ $? -ne 0 ]]; then return; fi
     
-    # 检查是否是IP direct mode
+    # 检查是否是IP直连模式
     local IP_MODE=0
     local SERVER_IP=""
     if [[ "$DOMAIN" == "__IP_DIRECT__" ]]; then
         IP_MODE=1
         SERVER_IP=$(curl -s -4 https://api.ipify.org)
-        DOMAIN="www.bing.com"  # Reality dest使用bing.com
         log "IP direct mode, server IP: $SERVER_IP"
-        log "Reality camouflage target: www.bing.com:443"
     fi
     
     install_xray
@@ -777,27 +806,37 @@ install_vless() {
     local PUBLIC_KEY=$(xray x25519 -i "$PRIVATE_KEY" | grep "Public key:" | awk '{print $3}')
     local SHORT_ID=$(openssl rand -hex 4)
     
-    if [[ $IP_MODE -eq 0 ]]; then
-        # Domain mode - applying cert
-        log "Applying for SSL certificate..."
-        
-        if [[ ! -f ~/.acme.sh/acme.sh ]]; then
-            curl https://get.acme.sh | sh
-        fi
-        
-        export PATH="$HOME/.acme.sh:$PATH"
-        ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt >/dev/null 2>&1 || true
-        
-        ~/.acme.sh/acme.sh --issue -d "$DOMAIN" --standalone --force --server letsencrypt
-        ~/.acme.sh/acme.sh --install-cert -d "$DOMAIN" \
-            --key-file /usr/local/etc/xray/private.key \
-            --fullchain-file /usr/local/etc/xray/cert.crt
+    # 选择 Reality SNI Camouflage
+    local REALITY_SNI="www.bing.com"
+    if [[ $IP_MODE -eq 1 ]]; then
+        echo ""
+        echo -e "${YELLOW}Select Reality SNI:${NC}"
+        echo "  1. www.bing.com (Recommended, Microsoft)"
+        echo "  2. www.amazon.com (Amazon)"
+        echo "  3. www.apple.com (Apple)"
+        echo "  4. www.yahoo.com (Yahoo)"
+        echo "  5. Custom"
+        echo ""
+        read -rp "请选择 [1-5，默认1]: " sni_choice
+        case "$sni_choice" in
+            2) REALITY_SNI="www.amazon.com" ;;
+            3) REALITY_SNI="www.apple.com" ;;
+            4) REALITY_SNI="www.yahoo.com" ;;
+            5)
+                read -rp "请输入CustomSNI域名: " custom_sni
+                if [[ -n "$custom_sni" ]]; then
+                    REALITY_SNI="$custom_sni"
+                fi
+                ;;
+            *) REALITY_SNI="www.bing.com" ;;
+        esac
+        log "Reality camouflage: $REALITY_SNI:443"
     fi
     
     mkdir -p /usr/local/etc/xray
     
     if [[ $IP_MODE -eq 1 ]]; then
-        # IP mode - no cert needed，但Reality不需要证书
+        # IP直连模式
         cat > /usr/local/etc/xray/config.json <<EOF
 {
     "log": {
@@ -823,11 +862,10 @@ install_vless() {
                 "security": "reality",
                 "realitySettings": {
                     "show": false,
-                    "dest": "www.bing.com:443",
+                    "dest": "$REALITY_SNI:443",
                     "xver": 0,
                     "serverNames": [
-                        "www.bing.com",
-                        "bing.com"
+                        "$REALITY_SNI"
                     ],
                     "privateKey": "$PRIVATE_KEY",
                     "publicKey": "$PUBLIC_KEY",
@@ -864,7 +902,7 @@ install_vless() {
 }
 EOF
     else
-        # Domain mode
+        # 有域名模式 - 也使用Reality，不需要证书
         cat > /usr/local/etc/xray/config.json <<EOF
 {
     "log": {
@@ -890,11 +928,10 @@ EOF
                 "security": "reality",
                 "realitySettings": {
                     "show": false,
-                    "dest": "www.bing.com:443",
+                    "dest": "$REALITY_SNI:443",
                     "xver": 0,
                     "serverNames": [
-                        "www.bing.com",
-                        "bing.com",
+                        "$REALITY_SNI",
                         "$DOMAIN"
                     ],
                     "privateKey": "$PRIVATE_KEY",
@@ -935,6 +972,7 @@ EOF
     
     systemctl restart xray
     
+    # 导出Client Config
     if [[ $IP_MODE -eq 1 ]]; then
         cat > "$CONFIG_DIR/vless-info.txt" <<EOF
 ========== Vless + Reality (IP直连) ==========
@@ -946,12 +984,29 @@ Network: tcp
 Security: reality
 Public Key: $PUBLIC_KEY
 Short ID: $SHORT_ID
-SNI: www.bing.com
-Camouflage: www.bing.com:443
+SNI: $REALITY_SNI
+Camouflage: $REALITY_SNI:443
 ====================================
 EOF
         
-        local VLESS_LINK="vless://${UUID}@${SERVER_IP}:${PORT}?security=reality&sni=www.bing.com&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp&flow=xtls-rprx-vision#Vless-IP-$(hostname)"
+        cat > "$CONFIG_DIR/vless-client.json" <<EOF
+{
+=========== Client Config ===========
+Protocol: Vless + Reality
+地址: $SERVER_IP
+Port: $PORT
+UUID: $UUID
+Flow: xtls-rprx-vision
+Network: tcp
+Security: reality
+Public Key: $PUBLIC_KEY
+Short ID: $SHORT_ID
+SNI: $REALITY_SNI
+====================================
+}
+EOF
+        
+        local VLESS_LINK="vless://${UUID}@${SERVER_IP}:${PORT}?security=reality&sni=$REALITY_SNI&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp&flow=xtls-rprx-vision#Vless-IP-$(hostname)"
     else
         cat > "$CONFIG_DIR/vless-info.txt" <<EOF
 ========== Vless + Reality ==========
@@ -963,12 +1018,29 @@ Network: tcp
 Security: reality
 Public Key: $PUBLIC_KEY
 Short ID: $SHORT_ID
-SNI: www.bing.com
-Camouflage: www.bing.com:443
+SNI: $REALITY_SNI
+Camouflage: $REALITY_SNI:443
 ====================================
 EOF
         
-        local VLESS_LINK="vless://${UUID}@${DOMAIN}:${PORT}?security=reality&sni=www.bing.com&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp&flow=xtls-rprx-vision#Vless-Reality-$(hostname)"
+        cat > "$CONFIG_DIR/vless-client.json" <<EOF
+{
+=========== Client Config ===========
+Protocol: Vless + Reality
+地址: $DOMAIN
+Port: $PORT
+UUID: $UUID
+Flow: xtls-rprx-vision
+Network: tcp
+Security: reality
+Public Key: $PUBLIC_KEY
+Short ID: $SHORT_ID
+SNI: $REALITY_SNI
+====================================
+}
+EOF
+        
+        local VLESS_LINK="vless://${UUID}@${DOMAIN}:${PORT}?security=reality&sni=$REALITY_SNI&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp&flow=xtls-rprx-vision#Vless-Reality-$(hostname)"
     fi
     
     echo "$VLESS_LINK" > "$CONFIG_DIR/vless-link.txt"
@@ -978,13 +1050,9 @@ EOF
         qrencode -o "$CONFIG_DIR/vless-qr.png" "$VLESS_LINK"
     fi
     
-    if [[ $IP_MODE -eq 0 ]]; then
-        (crontab -l 2>/dev/null | grep -v "acme.sh"; echo "0 3 * * * ~/.acme.sh/acme.sh --cron --home ~/.acme.sh >/dev/null 2>&1 && systemctl restart xray") | crontab -
-    fi
-    
     clear
     echo -e "${GREEN}========================================${NC}"
-    echo -e "${GREEN}      Vless installed!${NC}"
+    echo -e "${GREEN}      Vless + Reality Install成功!${NC}"
     echo -e "${GREEN}========================================${NC}"
     echo ""
     cat "$CONFIG_DIR/vless-info.txt"
@@ -992,31 +1060,32 @@ EOF
     echo -e "${CYAN}Share Link:${NC}"
     echo "$VLESS_LINK"
     echo ""
+    echo -e "${CYAN}Client config saved to: $CONFIG_DIR/vless-client.json${NC}"
     
     if [[ -f "$CONFIG_DIR/vless-qr.png" ]]; then
         echo -e "${CYAN}QR code saved to: $CONFIG_DIR/vless-qr.png${NC}"
     fi
     
     echo ""
-    log "Vless installation complete!"
+    log "Vless complete!"
     echo ""
     read -rp "Press Enter to continue..."
 }
 
-# ==================== Hysteria2 Installation (需要域名) ====================
+# ==================== Hysteria2 Install (需要域名) ====================
 
 install_hysteria2() {
     clear
     echo ""
     echo -e "${CYAN}============================================================${NC}"
-    echo -e "${CYAN}                      Hysteria2 Installation${NC}"
+    echo -e "${CYAN}                      Hysteria2 Install${NC}"
     echo -e "${CYAN}============================================================${NC}"
     echo ""
     
     local DOMAIN=$(get_domain "Hysteria2")
     if [[ $? -ne 0 ]]; then return; fi
     
-    # 检查是否是IP direct mode
+    # 检查是否是IP直连模式
     local IP_MODE=0
     local SERVER_IP=""
     if [[ "$DOMAIN" == "__IP_DIRECT__" ]]; then
@@ -1060,7 +1129,7 @@ auth:
 masquerade:
   type: proxy
   proxy:
-    url: https://www.cloudflare.com
+    url: https://bing.com
     rewriteHost: true
 
 bandwidth:
@@ -1083,7 +1152,7 @@ Port: $PORT
 Password: $PASSWORD
 Network: udp
 TLS: Self-signed
-SNI: $SERVER_IP
+SNI: bing.com
 注意: 客户端需允许不Security连接
 =======================================
 EOF
@@ -1095,17 +1164,46 @@ Port: $PORT
 Password: $PASSWORD
 Network: udp
 TLS: Self-signed
-SNI: $DOMAIN
+SNI: bing.com
 =======================================
 EOF
     fi
     
     if [[ $IP_MODE -eq 1 ]]; then
-        local HY2_LINK="hysteria2://${PASSWORD}@${SERVER_IP}:${PORT}?sni=${SERVER_IP}&insecure=1#Hysteria2-IP-$(hostname)"
+        local HY2_LINK="hysteria2://${PASSWORD}@${SERVER_IP}:${PORT}?sni=bing.com&insecure=1#Hysteria2-IP-$(hostname)"
     else
-        local HY2_LINK="hysteria2://${PASSWORD}@${DOMAIN}:${PORT}?sni=${DOMAIN}&insecure=1#Hysteria2-$(hostname)"
+        local HY2_LINK="hysteria2://${PASSWORD}@${DOMAIN}:${PORT}?sni=bing.com&insecure=1#Hysteria2-$(hostname)"
     fi
     echo "$HY2_LINK" > "$CONFIG_DIR/hysteria2-link.txt"
+    
+    # 导出Client Config
+    if [[ $IP_MODE -eq 1 ]]; then
+        cat > "$CONFIG_DIR/hysteria2-client.json" <<EOF
+{
+=========== Client Config ===========
+协议: Hysteria2
+地址: $SERVER_IP
+Port: $PORT
+Password: $PASSWORD
+SNI: bing.com
+允许不Security: 是
+====================================
+}
+EOF
+    else
+        cat > "$CONFIG_DIR/hysteria2-client.json" <<EOF
+{
+=========== Client Config ===========
+协议: Hysteria2
+地址: $DOMAIN
+Port: $PORT
+Password: $PASSWORD
+SNI: bing.com
+允许不Security: 是
+====================================
+}
+EOF
+    fi
     
     if command -v qrencode &>/dev/null; then
         qrencode -t ANSIUTF8 "$HY2_LINK"
@@ -1114,7 +1212,7 @@ EOF
     
     clear
     echo -e "${GREEN}========================================${NC}"
-    echo -e "${GREEN}      Hysteria2 Installation成功!${NC}"
+    echo -e "${GREEN}      Hysteria2 Install成功!${NC}"
     echo -e "${GREEN}========================================${NC}"
     echo ""
     cat "$CONFIG_DIR/hysteria2-info.txt"
@@ -1122,66 +1220,108 @@ EOF
     echo -e "${CYAN}Share Link:${NC}"
     echo "$HY2_LINK"
     echo ""
+    echo -e "${CYAN}Client config saved to: $CONFIG_DIR/hysteria2-client.json${NC}"
     
     if [[ -f "$CONFIG_DIR/hysteria2-qr.png" ]]; then
         echo -e "${CYAN}QR code saved to: $CONFIG_DIR/hysteria2-qr.png${NC}"
     fi
     
     echo ""
-    log "Hysteria2 Installation完成!"
+    log "Hysteria2 Install完成!"
     echo ""
     read -rp "Press Enter to continue..."
 }
 
-# ==================== Shadowsocks Installation (不需要域名) ====================
+# ==================== Shadowsocks 安装 (不需要域名) ====================
 
 install_shadowsocks() {
     clear
     echo ""
     echo -e "${CYAN}============================================================${NC}"
-    echo -e "${CYAN}                    Shadowsocks Installation${NC}"
+    echo -e "${CYAN}                 Shadowsocks-rust Install${NC}"
     echo -e "${CYAN}============================================================${NC}"
     echo ""
     
-    log "Installing Shadowsocks..."
+    log "Installing Shadowsocks-rust..."
     
-    if [[ "$PKG_MANAGER" == "apt" ]]; then
-        apt-get install -y shadowsocks-libev
+    local SERVER_IP=$(curl -s -4 https://api.ipify.org)
+    local SS_PORT=$(shuf -i 10000-65000 -n 1)
+    
+    # 获取最新版本
+    local SS_VERSION=$(curl -s https://api.github.com/repos/shadowsocks/shadowsocks-rust/releases/latest | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*//')
+    log "Downloading SS-rust $SS_VERSION..."
+    
+    wget -qO /tmp/ss-rust.tar.xz "https://github.com/shadowsocks/shadowsocks-rust/releases/download/${SS_VERSION}/shadowsocks-${SS_VERSION}.x86_64-unknown-linux-gnu.tar.xz"
+    
+    mkdir -p /tmp/ss-rust
+    tar -xf /tmp/ss-rust.tar.xz -C /tmp/ss-rust
+    cp /tmp/ss-rust/ssserver /usr/local/bin/
+    chmod +x /usr/local/bin/ssserver
+    
+    # 生成Password
+    local SS_PASSWORD=""
+    if [[ -f /proc/sys/kernel/random/uuid ]]; then
+        SS_PASSWORD=$(cat /proc/sys/kernel/random/uuid)
     else
-        $PKG_MANAGER install -y shadowsocks-libev
+        SS_PASSWORD=$(openssl rand -base64 16)
     fi
     
-    local PORT=$(shuf -i 10000-65000 -n 1)
-    local PASSWORD=$(openssl rand -base64 16)
-    local METHOD="aes-256-gcm"
-    local SERVER_IP=$(curl -s -4 https://api.ipify.org)
+    local SS_METHOD="aes-256-gcm"
     
-    cat > /etc/shadowsocks-libev/config.json <<EOF
+    mkdir -p /etc/shadowsocks
+    cat > /etc/shadowsocks/config.json <<EOF
 {
-    "server":"0.0.0.0",
-    "server_port":$PORT,
-    "password":"$PASSWORD",
-    "timeout":300,
-    "method":"$METHOD",
-    "fast_open":true,
-    "nameserver":"8.8.8.8",
-    "mode":"tcp_and_udp"
+    "server": "0.0.0.0",
+    "server_port": $SS_PORT,
+    "password": "$SS_PASSWORD",
+    "timeout": 300,
+    "method": "$SS_METHOD",
+    "fast_open": true,
+    "nameserver": "8.8.8.8",
+    "mode": "tcp_and_udp"
 }
 EOF
     
-    systemctl enable shadowsocks-libev
-    systemctl restart shadowsocks-libev
-    
-    cat > "$CONFIG_DIR/ss-info.txt" <<EOF
-========== Shadowsocks Config ==========
-Server: $SERVER_IP
-Port: $PORT
-Password: $PASSWORD
-Method: $METHOD
-=========================================
+    cat > /etc/systemd/system/shadowsocks-rust.service <<EOF
+[Unit]
+Description=Shadowsocks-rust Server
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/ssserver -c /etc/shadowsocks/config.json
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
 EOF
     
-    local SS_LINK="ss://$(echo -n "$METHOD:$PASSWORD" | base64 -w 0)@${SERVER_IP}:$PORT#SS-$(hostname)"
+    systemctl daemon-reload
+    systemctl enable shadowsocks-rust
+    systemctl restart shadowsocks-rust
+    
+    cat > "$CONFIG_DIR/ss-info.txt" <<EOF
+========== Shadowsocks-rust Config ==========
+Server: $SERVER_IP
+Port: $SS_PORT
+Password: $SS_PASSWORD
+Method: $SS_METHOD
+==============================================
+EOF
+    
+    cat > "$CONFIG_DIR/ss-client.json" <<EOF
+{
+=========== Client Config ===========
+协议: Shadowsocks
+地址: $SERVER_IP
+Port: $SS_PORT
+Password: $SS_PASSWORD
+Method: $SS_METHOD
+====================================
+}
+EOF
+    
+    local SS_LINK="ss://$(echo -n "$SS_METHOD:$SS_PASSWORD" | base64 -w 0)@${SERVER_IP}:$SS_PORT#SS-$(hostname)"
     echo "$SS_LINK" > "$CONFIG_DIR/ss-link.txt"
     
     if command -v qrencode &>/dev/null; then
@@ -1191,7 +1331,7 @@ EOF
     
     clear
     echo -e "${GREEN}========================================${NC}"
-    echo -e "${GREEN}      Shadowsocks Installation成功!${NC}"
+    echo -e "${GREEN}      Shadowsocks-rust Install成功!${NC}"
     echo -e "${GREEN}========================================${NC}"
     echo ""
     cat "$CONFIG_DIR/ss-info.txt"
@@ -1199,8 +1339,9 @@ EOF
     echo -e "${CYAN}Share Link:${NC}"
     echo "$SS_LINK"
     echo ""
+    echo -e "${CYAN}Client config saved to: $CONFIG_DIR/ss-client.json${NC}"
     
-    log "Shadowsocks Installation完成!"
+    log "Shadowsocks-rust Install完成!"
     echo ""
     read -rp "Press Enter to continue..."
 }
@@ -1211,14 +1352,15 @@ install_vmess() {
     clear
     echo ""
     echo -e "${CYAN}============================================================${NC}"
-    echo -e "${CYAN}                    VMess + WebSocket Installation${NC}"
+    echo -e "${CYAN}              VMess + WS + TLS Install${NC}"
+    echo -e "${CYAN}         (Nginx反代，443Port，自动证书续期)${NC}"
     echo -e "${CYAN}============================================================${NC}"
     echo ""
     
     local DOMAIN=$(get_domain "VMess")
     if [[ $? -ne 0 ]]; then return; fi
     
-    # 检查是否是IP direct mode
+    # 检查是否是IP直连模式
     local IP_MODE=0
     local SERVER_IP=""
     if [[ "$DOMAIN" == "__IP_DIRECT__" ]]; then
@@ -1226,16 +1368,32 @@ install_vmess() {
         SERVER_IP=$(curl -s -4 https://api.ipify.org)
         DOMAIN="$SERVER_IP"
         log "IP direct mode, server IP: $SERVER_IP"
+        warn "VMess+WS+TLS recommended with domain，IP direct uses self-signed cert"
+    fi
+    
+    # Check Web Ports
+    if [[ $IP_MODE -eq 0 ]]; then
+        if ! check_web_ports; then
+            warn "请先释放80/443Port后再安装"
+            read -rp "仍要继续? [y/N]: " force_continue
+            [[ ! "$force_continue" =~ ^[Yy]$ ]] && return
+        fi
     fi
     
     install_xray
     
-    local PORT=$(shuf -i 10000-65000 -n 1)
+    local V2RAY_PORT=8080
     local UUID=$(xray uuid)
-    local WS_PATH="/$(openssl rand -hex 8)"
+    local WS_PATH="/$(openssl rand -hex 6)"
+    local NGINX_PORT=443
+    
+    # 确保V2RayPort没被占用
+    while ! check_port "$V2RAY_PORT"; do
+        V2RAY_PORT=$((V2RAY_PORT + 1))
+    done
     
     if [[ $IP_MODE -eq 0 ]]; then
-        # Domain mode - applying cert
+        # 有域名模式 - 使用acme.sh申请证书
         log "Applying for SSL certificate..."
         
         if [[ ! -f ~/.acme.sh/acme.sh ]]; then
@@ -1244,53 +1402,131 @@ install_vmess() {
         
         export PATH="$HOME/.acme.sh:$PATH"
         ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt >/dev/null 2>&1 || true
+        
+        # 先停止nginx申请证书
+        systemctl stop nginx 2>/dev/null || true
         ~/.acme.sh/acme.sh --issue -d "$DOMAIN" --standalone --force --server letsencrypt
+        
+        mkdir -p /etc/letsencrypt/live/$DOMAIN
         ~/.acme.sh/acme.sh --install-cert -d "$DOMAIN" \
-            --key-file /usr/local/etc/xray/vmess-private.key \
-            --fullchain-file /usr/local/etc/xray/vmess-cert.crt
-    fi
+            --key-file /etc/letsencrypt/live/$DOMAIN/privkey.pem \
+            --fullchain-file /etc/letsencrypt/live/$DOMAIN/fullchain.pem
+        
+        # 配置Nginx
+        log "Configuring Nginx..."
+        cat > /etc/nginx/nginx.conf <<EOF
+pid /var/run/nginx.pid;
+worker_processes auto;
+worker_rlimit_nofile 51200;
+events {
+    worker_connections 1024;
+    multi_accept on;
+    use epoll;
+}
+http {
+    server_tokens off;
+    sendfile on;
+    tcp_nopush on;
+    tcp_nodelay on;
+    keepalive_timeout 120s;
+    keepalive_requests 10000;
+    types_hash_max_size 2048;
+    include /etc/nginx/mime.types;
+    access_log off;
+    error_log /dev/null;
+
+    server {
+        listen 80;
+        listen [::]:80;
+        server_name $DOMAIN;
+        location / {
+            return 301 https://\$server_name\$request_uri;
+        }
+    }
     
-    if [[ $IP_MODE -eq 1 ]]; then
-        # IP direct mode - 无TLS
-        cat > /usr/local/etc/xray/vmess.json <<EOF
-{
-    "log": {
-        "access": "/var/log/xray/vmess-access.log",
-        "error": "/var/log/xray/vmess-error.log",
-        "loglevel": "warning"
-    },
-    "inbounds": [
-        {
-            "port": $PORT,
-            "protocol": "vmess",
-            "settings": {
-                "clients": [
-                    {
-                        "id": "$UUID",
-                        "alterId": 0
-                    }
-                ]
-            },
-            "streamSettings": {
-                "network": "ws",
-                "wsSettings": {
-                    "path": "$WS_PATH"
-                },
-                "security": "none"
-            }
+    server {
+        listen $NGINX_PORT ssl http2;
+        listen [::]:$NGINX_PORT ssl http2;
+        server_name $DOMAIN;
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_ciphers ECDHE-RSA-AES128-GCM-SHA256:HIGH:!aNULL:!MD5:!RC4:!DHE;
+        ssl_prefer_server_ciphers on;
+        ssl_certificate /etc/letsencrypt/live/$DOMAIN/fullchain.pem;
+        ssl_certificate_key /etc/letsencrypt/live/$DOMAIN/privkey.pem;
+        location / {
+            default_type text/plain;
+            return 200 "Hello World !";
         }
-    ],
-    "outbounds": [
-        {
-            "protocol": "freedom",
-            "tag": "direct"
+        location /$WS_PATH {
+            proxy_redirect off;
+            proxy_pass http://127.0.0.1:$V2RAY_PORT;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade \$http_upgrade;
+            proxy_set_header Connection "upgrade";
+            proxy_set_header Host \$http_host;
         }
-    ]
+    }
 }
 EOF
+        
+        systemctl restart nginx
+        
+        # 设置证书自动续期
+        (crontab -l 2>/dev/null | grep -v "acme.sh"; echo "0 3 * * * ~/.acme.sh/acme.sh --cron --home ~/.acme.sh >/dev/null 2>&1 && systemctl restart nginx") | crontab -
+        
     else
-        # Domain mode
-        cat > /usr/local/etc/xray/vmess.json <<EOF
+        # IP模式 - Generating self-signed cert
+        log "Generating self-signed cert..."
+        mkdir -p /etc/nginx/ssl
+        openssl req -x509 -newkey rsa:4096 -keyout /etc/nginx/ssl/key.pem -out /etc/nginx/ssl/cert.pem -days 3650 -nodes -subj "/CN=$SERVER_IP" -addext "subjectAltName=IP:$SERVER_IP"
+        
+        cat > /etc/nginx/nginx.conf <<EOF
+pid /var/run/nginx.pid;
+worker_processes auto;
+worker_rlimit_nofile 51200;
+events {
+    worker_connections 1024;
+    multi_accept on;
+    use epoll;
+}
+http {
+    server_tokens off;
+    sendfile on;
+    tcp_nopush on;
+    tcp_nodelay on;
+    keepalive_timeout 120s;
+    keepalive_requests 10000;
+    types_hash_max_size 2048;
+    include /etc/nginx/mime.types;
+    access_log off;
+    error_log /dev/null;
+
+    server {
+        listen $NGINX_PORT ssl http2;
+        server_name $SERVER_IP;
+        ssl_certificate /etc/nginx/ssl/cert.pem;
+        ssl_certificate_key /etc/nginx/ssl/key.pem;
+        location / {
+            default_type text/plain;
+            return 200 "Hello World !";
+        }
+        location /$WS_PATH {
+            proxy_redirect off;
+            proxy_pass http://127.0.0.1:$V2RAY_PORT;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade \$http_upgrade;
+            proxy_set_header Connection "upgrade";
+            proxy_set_header Host \$http_host;
+        }
+    }
+}
+EOF
+        
+        systemctl restart nginx
+    fi
+    
+    # V2Ray配置 - 监听本地Port，无TLS（由Nginx处理TLS）
+    cat > /usr/local/etc/xray/vmess.json <<EOF
 {
     "log": {
         "access": "/var/log/xray/vmess-access.log",
@@ -1299,7 +1535,8 @@ EOF
     },
     "inbounds": [
         {
-            "port": $PORT,
+            "port": $V2RAY_PORT,
+            "listen": "127.0.0.1",
             "protocol": "vmess",
             "settings": {
                 "clients": [
@@ -1312,16 +1549,7 @@ EOF
             "streamSettings": {
                 "network": "ws",
                 "wsSettings": {
-                    "path": "$WS_PATH"
-                },
-                "security": "tls",
-                "tlsSettings": {
-                    "certificates": [
-                        {
-                            "certificateFile": "/usr/local/etc/xray/vmess-cert.crt",
-                            "keyFile": "/usr/local/etc/xray/vmess-private.key"
-                        }
-                    ]
+                    "path": "/$WS_PATH"
                 }
             }
         }
@@ -1334,39 +1562,72 @@ EOF
     ]
 }
 EOF
-    fi
     
     cp /usr/local/etc/xray/vmess.json /usr/local/etc/xray/config.json
     systemctl restart xray
     
     if [[ $IP_MODE -eq 1 ]]; then
         cat > "$CONFIG_DIR/vmess-info.txt" <<EOF
-========== VMess + WebSocket (IP Direct) ==========
+========== VMess + WS + TLS (IP Direct) ==========
 Server: $SERVER_IP
-Port: $PORT
+Port: $NGINX_PORT
 UUID: $UUID
 AlterID: 0
+Method: aes-128-gcm
 Network: ws
-WebSocket Path: $WS_PATH
-TLS: Off (IP direct no TLS)
+WS Path: /$WS_PATH
+Transport: tls
+注意: 客户端需允许不Security连接
 ====================================
 EOF
         
-        local VMESS_JSON='{"v":"2","ps":"VMess-IP-'$(hostname)'","add":"'$SERVER_IP'","port":"'$PORT'","id":"'$UUID'","aid":"0","scy":"auto","net":"ws","type":"none","host":"'$SERVER_IP'","path":"'$WS_PATH'","tls":"","sni":""}'
+        cat > "$CONFIG_DIR/vmess-client.json" <<EOF
+{
+=========== Client Config ===========
+协议: VMess
+地址: $SERVER_IP
+Port: $NGINX_PORT
+UUID: $UUID
+Method: aes-128-gcm
+Network: ws
+路径: /$WS_PATH
+Transport: tls
+注意: 8080是免流Port不需要打开tls
+====================================
+}
+EOF
+        
+        local VMESS_JSON='{"v":"2","ps":"VMess-IP-'$(hostname)'","add":"'$SERVER_IP'","port":"'$NGINX_PORT'","id":"'$UUID'","aid":"0","scy":"auto","net":"ws","type":"none","host":"'$SERVER_IP'","path":"/'$WS_PATH'","tls":"tls","sni":"'$SERVER_IP'","allowInsecure":1}'
     else
         cat > "$CONFIG_DIR/vmess-info.txt" <<EOF
-========== VMess + WebSocket ==========
+========== VMess + WS + TLS ==========
 Server: $DOMAIN
-Port: $PORT
+Port: $NGINX_PORT
 UUID: $UUID
 AlterID: 0
+Method: aes-128-gcm
 Network: ws
-WebSocket Path: $WS_PATH
-TLS: On
+WS Path: /$WS_PATH
+Transport: tls
 ====================================
 EOF
         
-        local VMESS_JSON='{"v":"2","ps":"VMess-'$(hostname)'","add":"'$DOMAIN'","port":"'$PORT'","id":"'$UUID'","aid":"0","scy":"auto","net":"ws","type":"none","host":"'$DOMAIN'","path":"'$WS_PATH'","tls":"tls","sni":"'$DOMAIN'"}'
+        cat > "$CONFIG_DIR/vmess-client.json" <<EOF
+{
+=========== Client Config ===========
+协议: VMess
+地址: $DOMAIN
+Port: $NGINX_PORT
+UUID: $UUID
+Method: aes-128-gcm
+Network: ws
+路径: /$WS_PATH
+Transport: tls
+====================================
+}
+EOF
+        
+        local VMESS_JSON='{"v":"2","ps":"VMess-'$(hostname)'","add":"'$DOMAIN'","port":"'$NGINX_PORT'","id":"'$UUID'","aid":"0","scy":"auto","net":"ws","type":"none","host":"'$DOMAIN'","path":"/'$WS_PATH'","tls":"tls","sni":"'$DOMAIN'"}'
     fi
     
     local VMESS_LINK="vmess://$(echo -n "$VMESS_JSON" | base64 -w 0)"
@@ -1379,7 +1640,7 @@ EOF
     
     clear
     echo -e "${GREEN}========================================${NC}"
-    echo -e "${GREEN}      VMess installed!${NC}"
+    echo -e "${GREEN}      VMess + WS + TLS 安装成功!${NC}"
     echo -e "${GREEN}========================================${NC}"
     echo ""
     cat "$CONFIG_DIR/vmess-info.txt"
@@ -1387,8 +1648,9 @@ EOF
     echo -e "${CYAN}Share Link:${NC}"
     echo "$VMESS_LINK"
     echo ""
+    echo -e "${CYAN}Client config saved to: $CONFIG_DIR/vmess-client.json${NC}"
     
-    log "VMess installation complete!"
+    log "VMess complete!"
     echo ""
     read -rp "Press Enter to continue..."
 }
@@ -1399,7 +1661,7 @@ install_trojan() {
     clear
     echo ""
     echo -e "${CYAN}============================================================${NC}"
-    echo -e "${CYAN}                    Trojan + WebSocket Installation${NC}"
+    echo -e "${CYAN}                    Trojan + WS Install${NC}"
     echo -e "${CYAN}============================================================${NC}"
     echo ""
     
@@ -1483,8 +1745,8 @@ Server: $DOMAIN
 Port: $PORT
 Password: $PASSWORD
 Network: websocket
-WebSocket Path: $WS_PATH
-TLS: On
+WS Path: $WS_PATH
+TLS: 开启
 SNI: $DOMAIN
 =====================================
 EOF
@@ -1508,7 +1770,148 @@ EOF
     echo "$TROJAN_LINK"
     echo ""
     
-    log "Trojan installation complete!"
+    log "Trojan complete!"
+    echo ""
+    read -rp "Press Enter to continue..."
+}
+
+
+# ==================== Caddy HTTPS 正向代理 ====================
+
+install_https_proxy() {
+    clear
+    echo ""
+    echo -e "${CYAN}============================================================${NC}"
+    echo -e "${CYAN}                Caddy HTTPS Forward Proxy${NC}"
+    echo -e "${CYAN}============================================================${NC}"
+    echo ""
+    
+    local DOMAIN=$(get_domain "HTTPS-Proxy")
+    if [[ $? -ne 0 ]]; then return; fi
+    
+    # 检查是否是IP直连模式
+    local IP_MODE=0
+    local SERVER_IP=""
+    if [[ "$DOMAIN" == "__IP_DIRECT__" ]]; then
+        IP_MODE=1
+        SERVER_IP=$(curl -s -4 https://api.ipify.org)
+        DOMAIN="$SERVER_IP"
+        log "IP direct mode, server IP: $SERVER_IP"
+    fi
+    
+    if [[ $IP_MODE -eq 0 ]]; then
+        if ! check_web_ports; then
+            warn "请先释放80/443Port后再安装"
+            read -rp "仍要继续? [y/N]: " force_continue
+            [[ ! "$force_continue" =~ ^[Yy]$ ]] && return
+        fi
+    fi
+    
+    local PROXY_PASS=$(openssl rand -base64 12)
+    local PROXY_USER="vps"
+    
+    log "Installing Caddy..."
+    
+    # 安装Caddy
+    if [[ "$PKG_MANAGER" == "apt" ]]; then
+        apt-get install -y debian-keyring debian-archive-keyring apt-transport-https >/dev/null 2>&1
+        curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg >/dev/null 2>&1
+        curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list >/dev/null 2>&1
+        apt-get update -y >/dev/null 2>&1
+        apt-get install -y caddy >/dev/null 2>&1
+    else
+        yum install -y yum-plugin-copr >/dev/null 2>&1
+        yum copr enable -y @caddy/caddy >/dev/null 2>&1
+        yum install -y caddy >/dev/null 2>&1
+    fi
+    
+    mkdir -p /etc/caddy
+    
+    if [[ $IP_MODE -eq 0 ]]; then
+        # 有域名模式 - 使用Caddy自动HTTPS
+        cat > /etc/caddy/Caddyfile <<EOF
+$DOMAIN {
+    route {
+        forward_proxy {
+            basic_auth $PROXY_USER $PROXY_PASS
+            hide_ip
+            hide_via
+        }
+        file_server {
+            root /var/www
+        }
+    }
+}
+EOF
+        
+        mkdir -p /var/www
+        echo "Hello World !" > /var/www/index.html
+        
+    else
+        # IP模式 - 自签名证书
+        mkdir -p /etc/caddy/ssl
+        openssl req -x509 -newkey rsa:4096 -keyout /etc/caddy/ssl/key.pem -out /etc/caddy/ssl/cert.pem -days 3650 -nodes -subj "/CN=$SERVER_IP" -addext "subjectAltName=IP:$SERVER_IP"
+        
+        cat > /etc/caddy/Caddyfile <<EOF
+:$SERVER_IP {
+    tls /etc/caddy/ssl/cert.pem /etc/caddy/ssl/key.pem
+    route {
+        forward_proxy {
+            basic_auth $PROXY_USER $PROXY_PASS
+            hide_ip
+            hide_via
+        }
+        file_server {
+            root /var/www
+        }
+    }
+}
+EOF
+        
+        mkdir -p /var/www
+        echo "Hello World !" > /var/www/index.html
+    fi
+    
+    systemctl enable caddy
+    systemctl restart caddy
+    
+    cat > "$CONFIG_DIR/https-info.txt" <<EOF
+========== HTTPS Proxy Config ==========
+Server: $DOMAIN
+Port: 443
+Username: $PROXY_USER
+Password: $PROXY_PASS
+Transport: tls
+============================================
+EOF
+    
+    cat > "$CONFIG_DIR/https-client.json" <<EOF
+{
+=========== Client Config ===========
+Proxy Mode: HTTPS Forward Proxy
+地址: $DOMAIN
+Port: 443
+Username: $PROXY_USER
+Password: $PROXY_PASS
+Transport: tls
+====================================
+}
+EOF
+    
+    clear
+    echo -e "${GREEN}========================================${NC}"
+    echo -e "${GREEN}      HTTPS Proxy installed!${NC}"
+    echo -e "${GREEN}========================================${NC}"
+    echo ""
+    cat "$CONFIG_DIR/https-info.txt"
+    echo ""
+    echo -e "${CYAN}Client config saved to: $CONFIG_DIR/https-client.json${NC}"
+    echo ""
+    echo -e "${CYAN}Surge/Clash Format:${NC}"
+    echo "http=$DOMAIN:443, username=$PROXY_USER, password=$PROXY_PASS, over-tls=true, tls-verification=true, tls-host=$DOMAIN"
+    echo ""
+    
+    log "HTTPS Proxy complete!"
     echo ""
     read -rp "Press Enter to continue..."
 }
@@ -1544,7 +1947,7 @@ view_config() {
     fi
     
     if [[ -f "$CONFIG_DIR/ss-info.txt" ]]; then
-        echo -e "${GREEN}[Shadowsocks Config]${NC}"
+        echo -e "${GREEN}[Shadowsocks 配置]${NC}"
         cat "$CONFIG_DIR/ss-info.txt"
         echo ""
         echo -e "${CYAN}Share Link:${NC}"
@@ -1573,6 +1976,13 @@ view_config() {
         echo "----------------------------------------"
     fi
     
+    if [[ -f "$CONFIG_DIR/https-info.txt" ]]; then
+        echo -e "${GREEN}[HTTPS Proxy Config]${NC}"
+        cat "$CONFIG_DIR/https-info.txt"
+        echo ""
+        echo "----------------------------------------"
+    fi
+    
     if [[ -f "$CONFIG_DIR/ddns.conf" ]]; then
         echo -e "${GREEN}[DDNS Config]${NC}"
         cat "$CONFIG_DIR/ddns.conf"
@@ -1584,7 +1994,7 @@ view_config() {
 }
 
 
-# ==================== Subscription Link ====================
+# ==================== Subscription ====================
 
 generate_subscription() {
     local SUB_CONTENT=""
@@ -1623,14 +2033,14 @@ show_subscription() {
     clear
     echo ""
     echo -e "${CYAN}============================================================${NC}"
-    echo -e "${CYAN}                      Subscription Link${NC}"
+    echo -e "${CYAN}                      Subscription${NC}"
     echo -e "${CYAN}============================================================${NC}"
     echo ""
     
     local SUB_B64=$(generate_subscription)
     
     if [[ -z "$SUB_B64" ]]; then
-        echo -e "${YELLOW}No proxy services installed，无法生成Subscription Link${NC}"
+        echo -e "${YELLOW}No proxy services installed，无法生成Subscription${NC}"
         echo ""
         read -rp "Press Enter to continue..."
         return
@@ -1641,7 +2051,7 @@ show_subscription() {
     
     local SERVER_IP=$(curl -s -4 https://api.ipify.org)
     
-    echo -e "${GREEN}Subscription Link (Base64):${NC}"
+    echo -e "${GREEN}Subscription (Base64):${NC}"
     echo ""
     echo "$SUB_B64"
     echo ""
@@ -1651,8 +2061,8 @@ show_subscription() {
     echo ""
     echo "  http://${SERVER_IP}:8080/sub"
     echo ""
-    echo -e "${YELLOW}Tip: Paste Base64 into clients that support subscription${NC}"
-    echo -e "${YELLOW}Or configure Nginx/Caddy to serve $CONFIG_DIR/subscription.txt as static file${NC}"
+    echo -e "${YELLOW}Tip: Paste Base64 into subscription-capable clients${NC}"
+    echo -e "${YELLOW}或Configuring Nginx/Caddy 将 $CONFIG_DIR/subscription.txt as static file${NC}"
     echo ""
     
     # Try to start a simple HTTP server for subscription
@@ -1681,13 +2091,14 @@ uninstall_service() {
     echo ""
     echo "  1. Uninstall Vless"
     echo "  2. Uninstall Hysteria2"
-    echo "  3. Uninstall Shadowsocks"
+    echo "  3. Uninstall SS-rust"
     echo "  4. Uninstall VMess"
     echo "  5. Uninstall Trojan"
-    echo "  6. Uninstall All"
-    echo "  7. Back to main menu"
+    echo "  6. Uninstall HTTPS Proxy"
+    echo "  7. Uninstall All"
+    echo "  8. Back to Main Menu"
     echo ""
-    read -rp "Select [1-7]: " uninstall_choice
+    read -rp "Select [1-8]: " uninstall_choice
     
     case $uninstall_choice in
         1)
@@ -1727,14 +2138,20 @@ uninstall_service() {
             log "Trojan uninstalled"
             ;;
         6)
-            systemctl stop xray hysteria-server shadowsocks-libev trojan-go 2>/dev/null || true
-            systemctl disable xray hysteria-server shadowsocks-libev trojan-go 2>/dev/null || true
-            rm -rf /usr/local/etc/xray /etc/hysteria /etc/trojan
-            rm -f /usr/local/bin/xray /usr/local/bin/hysteria /usr/local/bin/trojan-go
-            rm -f "$CONFIG_DIR"/*-info.txt "$CONFIG_DIR"/*-link.txt "$CONFIG_DIR"/*-qr.png
+            systemctl stop caddy 2>/dev/null || true
+            systemctl disable caddy 2>/dev/null || true
+            rm -f /etc/caddy/Caddyfile
+            log "HTTPS 正向代理uninstalled"
+            ;;
+        7)
+            systemctl stop xray hysteria-server shadowsocks-rust trojan-go caddy nginx 2>/dev/null || true
+            systemctl disable xray hysteria-server shadowsocks-rust trojan-go caddy nginx 2>/dev/null || true
+            rm -rf /usr/local/etc/xray /etc/hysteria /etc/trojan /etc/shadowsocks
+            rm -f /usr/local/bin/xray /usr/local/bin/hysteria /usr/local/bin/trojan-go /usr/local/bin/ssserver
+            rm -f "$CONFIG_DIR"/*-info.txt "$CONFIG_DIR"/*-link.txt "$CONFIG_DIR"/*-qr.png "$CONFIG_DIR"/*-client.json
             log "所有服务uninstalled"
             ;;
-        7) return ;;
+        8) return ;;
     esac
     
     echo ""
@@ -1746,7 +2163,7 @@ uninstall_service() {
 show_banner() {
     echo ""
     echo -e "${CYAN}============================================================${NC}"
-    echo -e "${GREEN}           VPS Toolbox - 多功能一键部署工具 v2.0.0${NC}"
+    echo -e "${GREEN}           VPS Toolbox - One-Click Deploy Tool v2.3.0${NC}"
     echo -e "${CYAN}============================================================${NC}"
     echo -e "  ${YELLOW}Author${NC}: Kitaro-Loked"
     echo -e "  ${YELLOW}Repo${NC}: https://github.com/Kitaro-Loked/VPS-Toolbox"
@@ -1759,19 +2176,20 @@ show_menu() {
     show_banner
     echo -e "  ${YELLOW}[DDNS & Network]${NC}"
     echo "    1. DDNS Domain Management (自动续签)"
-    echo "    2. WARP Configuration"
+    echo "    2. WARP Config"
     echo ""
     echo -e "  ${YELLOW}[Proxy Protocols]${NC}"
-    echo "    3. Install Vless + Reality (domain)"
-    echo "    4. Install Hysteria2 (domain)"
-    echo "    5. Install Shadowsocks (no domain)"
-    echo "    6. Install VMess + WS (domain)"
+    echo "    3. Install Vless + Reality (no domain)"
+    echo "    4. Install Hysteria2 (no domain)"
+    echo "    5. Install SS-rust (no domain)"
+    echo "    6. Install VMess + WS + TLS (Nginx)"
     echo "    7. Install Trojan + WS (domain)"
+    echo "    8. Install HTTPS Proxy (domain)"
     echo ""
     echo -e "  ${YELLOW}[Management]${NC}"
-    echo "    8. View All Config"
-    echo "    9. 生成Subscription Link"
-    echo "    10. Uninstall Service"
+    echo "    9. View All Config"
+    echo "    10. 生成Subscription"
+    echo "    11. Uninstall Service"
     echo "    0. Exit"
     echo ""
     echo -e "${CYAN}============================================================${NC}"
@@ -1785,7 +2203,7 @@ main() {
     
     while true; do
         show_menu
-        read -rp "Select [0-10]: " choice
+        read -rp "Select [0-11]: " choice
         
         case $choice in
             1) setup_ddns ;;
@@ -1795,9 +2213,10 @@ main() {
             5) install_shadowsocks ;;
             6) install_vmess ;;
             7) install_trojan ;;
-            8) view_config ;;
-            9) show_subscription ;;
-            10) uninstall_service ;;
+            8) install_https_proxy ;;
+            9) view_config ;;
+            10) show_subscription ;;
+            11) uninstall_service ;;
             0)
                 echo -e "${GREEN}Thanks for using VPS Toolbox!${NC}"
                 exit 0
