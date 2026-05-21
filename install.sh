@@ -107,8 +107,8 @@ setup_ddns() {
     echo ""
     echo -e "${YELLOW}请选择 DDNS 服务商:${NC}"
     echo ""
-    echo -e "  ${GREEN}1. scritch.org (推荐 - 最无脑)${NC}"
-    echo "     无需注册，一行命令直接送域名"
+    echo -e "  ${GREEN}1. 使用公网IP (无需域名 - 最无脑)${NC}"
+    echo "     直接显示服务器IP，适合Shadowsocks等"
     echo ""
     echo "  2. Cloudflare"
     echo "  3. DuckDNS"
@@ -118,7 +118,7 @@ setup_ddns() {
     read -rp "请选择 [1-5]: " ddns_choice
     
     case $ddns_choice in
-        1) setup_scritch ;;
+        1) show_public_ip ;;
         2) setup_cloudflare_ddns ;;
         3) setup_duckdns ;;
         4) setup_noip ;;
@@ -127,72 +127,41 @@ setup_ddns() {
     esac
 }
 
-# scritch.org - 最无脑DDNS
-setup_scritch() {
+# 显示公网IP
+show_public_ip() {
     echo ""
-    info "正在通过 scritch.org 申请免费域名..."
+    info "获取公网IP信息..."
     echo "----------------------------------------"
     
-    local SCRITCH_OUTPUT=$(curl -sS https://scritch.org/new)
-    
-    if [[ -z "$SCRITCH_OUTPUT" ]]; then
-        error "无法连接 scritch.org，请检查网络"
-    fi
-    
-    # 解析输出
-    DDNS_DOMAIN=$(echo "$SCRITCH_OUTPUT" | grep "Domain:" | awk '{print $2}')
-    DDNS_PASS=$(echo "$SCRITCH_OUTPUT" | grep "Password:" | awk '{print $2}')
-    local UPDATE_URL=$(echo "$SCRITCH_OUTPUT" | grep "Update:" | sed 's/Update:   //')
-    
-    if [[ -z "$DDNS_DOMAIN" || -z "$DDNS_PASS" ]]; then
-        error "解析 scritch.org 响应失败"
-    fi
-    
-    log "域名申请成功!"
-    log "域名: $DDNS_DOMAIN"
-    log "密码: $DDNS_PASS"
-    
-    # 保存配置
-    cat > "$CONFIG_DIR/ddns.conf" <<EOF
-DDNS_PROVIDER=scritch
-DDNS_DOMAIN=$DDNS_DOMAIN
-DDNS_PASS=$DDNS_PASS
-UPDATE_URL=$UPDATE_URL
-EOF
-    
-    # 创建更新脚本
-    cat > "$CONFIG_DIR/update-ddns.sh" <<EOF
-#!/bin/bash
-CONFIG_DIR="/etc/vps-toolbox"
-source "\$CONFIG_DIR/ddns.conf"
-
-PUBLIC_IP=\$(curl -s -4 https://api.ipify.org)
-CURRENT_IP=\$(dig +short "\$DDNS_DOMAIN" | tail -n1)
-
-if [[ "\$PUBLIC_IP" != "\$CURRENT_IP" ]]; then
-    curl -s "https://scritch.org/update?domain=\$DDNS_DOMAIN&password=\$DDNS_PASS" >/dev/null
-    echo "[\$(date)] DDNS updated: \$DDNS_DOMAIN -> \$PUBLIC_IP" >> /var/log/ddns.log
-fi
-EOF
-    chmod +x "$CONFIG_DIR/update-ddns.sh"
-    
-    # 添加定时任务
-    (crontab -l 2>/dev/null | grep -v "update-ddns"; echo "*/5 * * * * $CONFIG_DIR/update-ddns.sh >/dev/null 2>&1") | crontab -
+    local IPV4=$(curl -s -4 https://api.ipify.org 2>/dev/null || curl -s -4 https://ifconfig.me 2>/dev/null)
+    local IPV6=$(curl -s -6 https://api6.ipify.org 2>/dev/null || echo "未检测到")
     
     echo ""
     echo -e "${GREEN}========================================${NC}"
-    echo -e "${GREEN}      scritch.org DDNS 配置完成!${NC}"
+    echo -e "${GREEN}           服务器网络信息${NC}"
     echo -e "${GREEN}========================================${NC}"
     echo ""
-    echo -e "${CYAN}域名:${NC} $DDNS_DOMAIN"
-    echo -e "${CYAN}密码:${NC} $DDNS_PASS"
-    echo -e "${CYAN}更新命令:${NC}"
-    echo "$UPDATE_URL"
+    echo -e "${CYAN}IPv4 地址:${NC} $IPV4"
+    echo -e "${CYAN}IPv6 地址:${NC} $IPV6"
     echo ""
-    log "已添加自动更新定时任务 (每5分钟)"
+    echo -e "${YELLOW}使用说明:${NC}"
+    echo "  - Shadowsocks 可直接使用 IP 地址"
+    echo "  - Hysteria2 可使用 IP + 自签名证书"
+    echo "  - Vless/VMess/Trojan 需要域名+证书"
+    echo ""
+    echo -e "${YELLOW}如需域名，请选择:${NC}"
+    echo "  1. DuckDNS (最简单)"
+    echo "  2. Cloudflare (最稳定)"
+    echo "  3. 返回"
+    echo ""
+    read -rp "请选择 [1-3]: " ip_choice
     
-    echo ""
-    read -rp "按回车键继续..."
+    case $ip_choice in
+        1) setup_duckdns ;;
+        2) setup_cloudflare_ddns ;;
+        3) return ;;
+        *) warn "无效选择"; sleep 2; show_public_ip ;;
+    esac
 }
 
 # Cloudflare DDNS
@@ -406,7 +375,7 @@ get_domain() {
     # 提供选择
     echo ""
     echo -e "${YELLOW}请选择域名来源:${NC}"
-    echo "  1. 使用 scritch.org 自动申请 (最无脑)"
+    echo "  1. 使用 DuckDNS 自动申请 (简单)"
     echo "  2. 使用自己的域名"
     echo "  3. 返回上一级"
     echo ""

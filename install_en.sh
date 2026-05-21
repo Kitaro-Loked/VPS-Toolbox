@@ -45,7 +45,7 @@ info() {
 # Check root
 check_root() {
     if [[ $EUID -ne 0 ]]; then
-        error "Please run as root"
+        error "requestuse root ????scrision"
     fi
 }
 
@@ -56,7 +56,7 @@ check_system() {
         OS=$NAME
         VER=$VERSION_ID
     else
-        error "Cannot detect OS"
+        error "no-brainerwaydetect?Ausystemtype"
     fi
     
     case $OS in
@@ -70,16 +70,16 @@ check_system() {
             PKG_MANAGER="dnf"
             ;;
         *)
-            error "Unsupported OS: $OS"
+            error "notsupport??Ausystem: $OS"
             ;;
     esac
     
-    log "Detected OS: $OS $VER"
+    log "detecttosystem: $OS $VER"
 }
 
 # Install dependencies
 install_dependencies() {
-    log "Installing dependencies..."
+    log "Installingbasicdependencies..."
     
     if [[ "$PKG_MANAGER" == "apt" ]]; then
         apt-get update -y >/dev/null 2>&1
@@ -96,7 +96,7 @@ install_dependencies() {
     log "Dependencies installed"
 }
 
-# ==================== DDNS Functions ====================
+# ==================== DDNS Features ====================
 
 setup_ddns() {
     clear
@@ -107,18 +107,18 @@ setup_ddns() {
     echo ""
     echo -e "${YELLOW}Select DDNS provider:${NC}"
     echo ""
-    echo -e "  ${GREEN}1. scritch.org (Recommended - Easiest)${NC}"
-    echo "     No signup, one command gets a domain"
+    echo -e "  ${GREEN}1. Use Public IP (no domain needed - easiest)${NC}"
+    echo "     Show server IP, good for Shadowsocks etc."
     echo ""
     echo "  2. Cloudflare"
     echo "  3. DuckDNS"
     echo "  4. No-IP"
-    echo "  5. ReturnMain Menu"
+    echo "  5. Back??ple"
     echo ""
-    read -rp "Please select [1-5]: " ddns_choice
+    read -rp "requestselect [1-5]: " ddns_choice
     
     case $ddns_choice in
-        1) setup_scritch ;;
+        1) show_public_ip ;;
         2) setup_cloudflare_ddns ;;
         3) setup_duckdns ;;
         4) setup_noip ;;
@@ -127,72 +127,41 @@ setup_ddns() {
     esac
 }
 
-# scritch.org - EasiestDDNS
-setup_scritch() {
+# show??IP
+show_public_ip() {
     echo ""
-    info "Applying for free domain via scritch.org..."
+    info "Getting public IP info..."
     echo "----------------------------------------"
     
-    local SCRITCH_OUTPUT=$(curl -sS https://scritch.org/new)
-    
-    if [[ -z "$SCRITCH_OUTPUT" ]]; then
-        error "Cannot connect to scritch.org"
-    fi
-    
-    # Parse output
-    DDNS_DOMAIN=$(echo "$SCRITCH_OUTPUT" | grep "Domain:" | awk '{print $2}')
-    DDNS_PASS=$(echo "$SCRITCH_OUTPUT" | grep "Password:" | awk '{print $2}')
-    local UPDATE_URL=$(echo "$SCRITCH_OUTPUT" | grep "Update:" | sed 's/Update:   //')
-    
-    if [[ -z "$DDNS_DOMAIN" || -z "$DDNS_PASS" ]]; then
-        error "Failed to parse scritch.org response"
-    fi
-    
-    log "Domain application successful!"
-    log "Domain: $DDNS_DOMAIN"
-    log "Password: $DDNS_PASS"
-    
-    # saveConfiguring
-    cat > "$CONFIG_DIR/ddns.conf" <<EOF
-DDNS_PROVIDER=scritch
-DDNS_DOMAIN=$DDNS_DOMAIN
-DDNS_PASS=$DDNS_PASS
-UPDATE_URL=$UPDATE_URL
-EOF
-    
-    # Create update script
-    cat > "$CONFIG_DIR/update-ddns.sh" <<EOF
-#!/bin/bash
-CONFIG_DIR="/etc/vps-toolbox"
-source "\$CONFIG_DIR/ddns.conf"
-
-PUBLIC_IP=\$(curl -s -4 https://api.ipify.org)
-CURRENT_IP=\$(dig +short "\$DDNS_DOMAIN" | tail -n1)
-
-if [[ "\$PUBLIC_IP" != "\$CURRENT_IP" ]]; then
-    curl -s "https://scritch.org/update?domain=\$DDNS_DOMAIN&password=\$DDNS_PASS" >/dev/null
-    echo "[\$(date)] DDNS updated: \$DDNS_DOMAIN -> \$PUBLIC_IP" >> /var/log/ddns.log
-fi
-EOF
-    chmod +x "$CONFIG_DIR/update-ddns.sh"
-    
-    # Add cron job
-    (crontab -l 2>/dev/null | grep -v "update-ddns"; echo "*/5 * * * * $CONFIG_DIR/update-ddns.sh >/dev/null 2>&1") | crontab -
+    local IPV4=$(curl -s -4 https://api.ipify.org 2>/dev/null || curl -s -4 https://ifconfig.me 2>/dev/null)
+    local IPV6=$(curl -s -6 https://api6.ipify.org 2>/dev/null || echo "?detectto")
     
     echo ""
     echo -e "${GREEN}========================================${NC}"
-    echo -e "${GREEN}      scritch.org DDNS configured!${NC}"
+    echo -e "${GREEN}           Server Network Info${NC}"
     echo -e "${GREEN}========================================${NC}"
     echo ""
-    echo -e "${CYAN}Domain:${NC} $DDNS_DOMAIN"
-    echo -e "${CYAN}Password:${NC} $DDNS_PASS"
-    echo -e "${CYAN}Update command:${NC}"
-    echo "$UPDATE_URL"
+    echo -e "${CYAN}IPv4 Address:${NC} $IPV4"
+    echo -e "${CYAN}IPv6 Address:${NC} $IPV6"
     echo ""
-    log "Auto-update cron job added (every 5minutes)"
+    echo -e "${YELLOW}Usage:${NC}"
+    echo "  - Shadowsocks can use IP directly"
+    echo "  - Hysteria2 can use IP + self-signed cert"
+    echo "  - Vless/VMess/Trojan need domain + cert"
+    echo ""
+    echo -e "${YELLOW}For domain, select:${NC}"
+    echo "  1. DuckDNS (Simplest)"
+    echo "  2. Cloudflare (Most stable)"
+    echo "  3. Back"
+    echo ""
+    read -rp "requestselect [1-3]: " ip_choice
     
-    echo ""
-    read -rp "Press Enter to continue..."
+    case $ip_choice in
+        1) setup_duckdns ;;
+        2) setup_cloudflare_ddns ;;
+        3) return ;;
+        *) warn "Invalid choice"; sleep 2; show_public_ip ;;
+    esac
 }
 
 # Cloudflare DDNS
@@ -287,7 +256,7 @@ EOF
     log "DDNS configured!"
     log "Domain: $FULL_DOMAIN"
     log "Current IP: $PUBLIC_IP"
-    log "Auto-update cron job added (every 5minutes)"
+    log "Auto-update cron job added (every 5 min)"
     
     echo ""
     read -rp "Press Enter to continue..."
@@ -406,11 +375,11 @@ get_domain() {
     # Provide options
     echo ""
     echo -e "${YELLOW}Select domain source:${NC}"
-    echo "  1. Auto-apply via scritch.org (Easiest)"
+    echo "  1. Auto-apply via DuckDNS (simple)"
     echo "  2. Use your own domain"
     echo "  3. Go back"
     echo ""
-    read -rp "Please select [1-3]: " domain_choice
+    read -rp "requestselect [1-3]: " domain_choice
     
     case $domain_choice in
         1)
@@ -419,7 +388,7 @@ get_domain() {
                 echo "$DDNS_DOMAIN"
                 return 0
             else
-                error "DomainapplyPlease Failed"
+                error "Domainapplyrequestfail"
             fi
             ;;
         2)
@@ -440,7 +409,7 @@ get_domain() {
     esac
 }
 
-# ==================== WARP Functions ====================
+# ==================== WARP Features ====================
 
 setup_warp() {
     clear
@@ -457,9 +426,9 @@ setup_warp() {
         echo "  2. Stop WARP"
         echo "  3. Check status"
         echo "  4. Uninstall WARP"
-        echo "  5. ReturnMain Menu"
+        echo "  5. Back??ple"
         echo ""
-        read -rp "Please select [1-5]: " warp_choice
+        read -rp "requestselect [1-5]: " warp_choice
         
         case $warp_choice in
             1) warp-cli connect; log "WARP alStarting" ;;
@@ -474,9 +443,9 @@ setup_warp() {
     echo -e "${YELLOW}Select installation method:${NC}"
     echo "  1. Official Cloudflare WARP (Recommended)"
     echo "  2. WireGuard mode (wgcf)"
-    echo "  3. ReturnMain Menu"
+    echo "  3. Back??ple"
     echo ""
-    read -rp "Please select [1-3]: " warp_install_choice
+    read -rp "requestselect [1-3]: " warp_install_choice
     
     case $warp_install_choice in
         1) install_warp_official ;;
@@ -553,7 +522,7 @@ uninstall_warp() {
     read -rp "Press Enter to continue..."
 }
 
-# ==================== Xray Core Install ====================
+# ==================== Xray Coreinstall ====================
 
 install_xray() {
     if command -v xray &>/dev/null; then
@@ -569,7 +538,7 @@ install_xray() {
     log "Xray installed"
 }
 
-# ==================== Vless Install (needs domain) ====================
+# ==================== Vless install (needDomain) ====================
 
 install_vless() {
     clear
@@ -720,7 +689,7 @@ EOF
     read -rp "Press Enter to continue..."
 }
 
-# ==================== Hysteria2 Install (needs domain) ====================
+# ==================== Hysteria2 Install (needDomain) ====================
 
 install_hysteria2() {
     clear
@@ -815,7 +784,7 @@ EOF
     read -rp "Press Enter to continue..."
 }
 
-# ==================== Shadowsocks Install (no domain needed) ====================
+# ==================== Shadowsocks Install (notneedDomain) ====================
 
 install_shadowsocks() {
     clear
@@ -887,7 +856,7 @@ EOF
     read -rp "Press Enter to continue..."
 }
 
-# ==================== VMess Install (needs domain) ====================
+# ==================== VMess install (needDomain) ====================
 
 install_vmess() {
     clear
@@ -1003,7 +972,7 @@ EOF
     read -rp "Press Enter to continue..."
 }
 
-# ==================== Trojan Install (needs domain) ====================
+# ==================== Trojan install (needDomain) ====================
 
 install_trojan() {
     clear
@@ -1122,7 +1091,7 @@ EOF
     read -rp "Press Enter to continue..."
 }
 
-# ==================== View Config ====================
+# ==================== eck?Configuring ====================
 
 view_config() {
     clear
@@ -1207,9 +1176,9 @@ uninstall_service() {
     echo "  4. Uninstall VMess"
     echo "  5. Uninstall Trojan"
     echo "  6. Uninstall All"
-    echo "  7. ReturnMain Menu"
+    echo "  7. Back??ple"
     echo ""
-    read -rp "Please select [1-7]: " uninstall_choice
+    read -rp "requestselect [1-7]: " uninstall_choice
     
     case $uninstall_choice in
         1)
@@ -1263,12 +1232,12 @@ uninstall_service() {
     read -rp "Press Enter to continue..."
 }
 
-# ==================== Main Menu ====================
+# ==================== ??ple ====================
 
 show_banner() {
     echo ""
     echo -e "${CYAN}============================================================${NC}"
-    echo -e "${GREEN}           VPS Toolbox - All-in-One Deploy Tool v2.0.0${NC}"
+    echo -e "${GREEN}           VPS Toolbox - ?Features?????? v2.0.0${NC}"
     echo -e "${CYAN}============================================================${NC}"
     echo -e "  ${YELLOW}Author${NC}: Kitaro-Loked"
     echo -e "  ${YELLOW}Repo${NC}: https://github.com/Kitaro-Loked/VPS-Toolbox"
