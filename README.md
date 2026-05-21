@@ -1,4 +1,4 @@
-﻿# VPS Toolbox
+# VPS Toolbox
 
 一个功能强大的 Linux 服务器一键部署工具箱，支持 DDNS 域名自动申请与续签、WARP 配置，以及多种代理协议的无脑化安装。
 
