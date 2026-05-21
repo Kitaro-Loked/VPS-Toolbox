@@ -2,6 +2,8 @@
 
 一个功能强大的 Linux 服务器一键部署工具箱，支持 DDNS 域名自动申请与续签、WARP 配置，以及多种代理协议的无脑化安装。
 
+> **致谢**: 本项目在设计和实现上借鉴了 [yeahwu/v2ray-wss](https://github.com/yeahwu/v2ray-wss) 的优秀思路，包括 Nginx 反代 WS + TLS、Reality SNI 伪装、Hysteria2 bing.com 伪装、Shadowsocks-rust 等技术方案。在此基础上进行了扩展和增强，增加了 DDNS 一键申请、WARP 配置、Trojan 支持、订阅链接生成、客户端配置导出等功能。
+
 ## 功能特性
 
 ### DDNS 动态域名
@@ -19,11 +21,14 @@
 
 | 协议 | 特点 | 推荐度 |
 |------|------|--------|
-| **Vless + Reality** | 最新协议，抗检测能力强 | 5星 |
-| **Hysteria2** | 基于 QUIC，速度快，抗封锁 | 5星 |
-| **Shadowsocks** | 轻量简单，兼容性好 | 4星 |
-| **VMess + WebSocket** | 成熟稳定，支持 CDN | 4星 |
-| **Trojan + WebSocket** | 伪装 HTTPS 流量 | 4星 |
+| 协议 | 特点 | 需要域名 | 推荐度 |
+|------|------|---------|--------|
+| **Vless + Reality** | 最新协议，SNI 可选，抗检测能力强 | ❌ | 5星 |
+| **Hysteria2** | 基于 QUIC，bing.com 伪装，速度快 | ❌ | 5星 |
+| **Shadowsocks-rust** | Rust 高性能版本，轻量简单 | ❌ | 4星 |
+| **VMess + WS + TLS** | Nginx 反代 443 端口，伪装网站 | ✅ 推荐 | 4星 |
+| **Trojan + WebSocket** | 伪装 HTTPS 流量 | ✅ | 4星 |
+| **HTTPS 正向代理** | Caddy 实现，Surge/Clash 兼容 | ✅ | 3星 |
 
 ## 系统要求
 
@@ -65,16 +70,23 @@ bash install_en.sh
 运行脚本后会显示交互式中文菜单，按提示选择即可：
 
 ```
-1. DDNS 域名申请与管理 (自动续签)
-2. WARP 一键配置
-3. 安装 Vless + Reality (推荐)
-4. 安装 Hysteria2 (推荐)
-5. 安装 Shadowsocks
-6. 安装 VMess + WebSocket
-7. 安装 Trojan + WebSocket
-8. 查看所有配置
-9. 卸载服务
-0. 退出脚本
+[DDNS & 网络]
+  1. DDNS 域名申请与管理 (自动续签)
+  2. WARP 一键配置
+
+[代理协议]
+  3. 安装 Vless + Reality (无需域名，SNI可选)
+  4. 安装 Hysteria2 (无需域名，bing.com伪装)
+  5. 安装 Shadowsocks-rust (无需域名，高性能)
+  6. 安装 VMess + WS + TLS (Nginx反代443端口)
+  7. 安装 Trojan + WebSocket (需要域名)
+  8. 安装 HTTPS 正向代理 (需要域名)
+
+[管理]
+  9. 查看所有配置
+  10. 生成订阅链接
+  11. 卸载服务
+  0. 退出脚本
 ```
 
 ### DDNS 域名配置
@@ -157,15 +169,30 @@ A: 使用 systemctl status xray 或对应的服务名称
 
 ## 更新日志
 
+### v2.3.0
+- **借鉴 yeahwu/v2ray-wss 技术方案**并扩展增强
+- VMess+WS+TLS 改用 **Nginx 反代**（443端口，伪装网站）
+- Vless Reality 增加 **SNI 选择菜单**（bing/amazon/apple/yahoo/自定义）
+- Hysteria2 SNI 伪装改为 **bing.com**
+- Shadowsocks 升级为 **shadowsocks-rust** 高性能版本
+- 新增 **Caddy HTTPS 正向代理**（Surge/Clash 兼容）
+- 新增 **端口占用检测**功能
+- 所有协议支持 **客户端配置导出**（client.json）
+- 所有协议支持 **IP 直连模式**（无需域名）
+- 新增 **订阅链接生成**功能
+
+### v2.2.0
+- 所有协议支持 IP 直连模式（无需域名和证书）
+
+### v2.1.x
+- 修复输入验证、编码、换行符等问题
+- 添加 DuckDNS 一键申请
+
 ### v1.0.0
 - 初始版本发布
 - 支持 Cloudflare/DuckDNS/No-IP DDNS
 - 支持 WARP 官方客户端和 WireGuard 模式
-- 支持 Vless + Reality
-- 支持 Hysteria2
-- 支持 Shadowsocks
-- 支持 VMess + WebSocket
-- 支持 Trojan + WebSocket
+- 支持 Vless + Reality / Hysteria2 / Shadowsocks / VMess + WebSocket / Trojan + WebSocket
 - 自动 SSL 证书申请和续签
 - 自动 DDNS IP 更新
 
