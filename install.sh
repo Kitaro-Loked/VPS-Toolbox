@@ -6,7 +6,7 @@ sed -i "s/\r$//" "$0" 2>/dev/null || true
 # 功能: DDNS/WARP/Vless/Hysteria2/SS/VMess/Trojan
 # 作者: Kitaro-Loked
 # 仓库: https://github.com/Kitaro-Loked/VPS-Toolbox
-# 版本: 2.1.2
+# 版本: 2.2.0
 # ============================================================
 
 set -e
@@ -575,9 +575,10 @@ get_domain() {
     echo -e "${YELLOW}请选择域名来源:${NC}"
     echo "  1. 一键申请 DuckDNS (最无脑)"
     echo "  2. 使用自己的域名"
-    echo "  3. 返回上一级"
+    echo "  3. 使用IP直连 (无需域名和证书)"
+    echo "  4. 返回上一级"
     echo ""
-    read -rp "请选择 [1-3]: " domain_choice
+    read -rp "请选择 [1-4]: " domain_choice
     
     case $domain_choice in
         1)
@@ -602,6 +603,11 @@ get_domain() {
             return 0
             ;;
         3)
+            # IP直连模式 - 返回特殊标记
+            echo "__IP_DIRECT__"
+            return 0
+            ;;
+        4)
             return 1
             ;;
         *)
@@ -752,6 +758,17 @@ install_vless() {
     local DOMAIN=$(get_domain "Vless")
     if [[ $? -ne 0 ]]; then return; fi
     
+    # 检查是否是IP直连模式
+    local IP_MODE=0
+    local SERVER_IP=""
+    if [[ "$DOMAIN" == "__IP_DIRECT__" ]]; then
+        IP_MODE=1
+        SERVER_IP=$(curl -s -4 https://api.ipify.org)
+        DOMAIN="www.bing.com"  # Reality dest使用bing.com
+        log "使用IP直连模式，服务器IP: $SERVER_IP"
+        log "Reality伪装目标: www.bing.com:443"
+    fi
+    
     install_xray
     
     local PORT=$(shuf -i 10000-65000 -n 1)
@@ -760,21 +777,28 @@ install_vless() {
     local PUBLIC_KEY=$(xray x25519 -i "$PRIVATE_KEY" | grep "Public key:" | awk '{print $3}')
     local SHORT_ID=$(openssl rand -hex 4)
     
-    log "正在申请 SSL 证书..."
-    
-    if [[ ! -f ~/.acme.sh/acme.sh ]]; then
-        curl https://get.acme.sh | sh
+    if [[ $IP_MODE -eq 0 ]]; then
+        # 有域名模式 - 申请证书
+        log "正在申请 SSL 证书..."
+        
+        if [[ ! -f ~/.acme.sh/acme.sh ]]; then
+            curl https://get.acme.sh | sh
+        fi
+        
+        export PATH="$HOME/.acme.sh:$PATH"
+        ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt >/dev/null 2>&1 || true
+        
+        ~/.acme.sh/acme.sh --issue -d "$DOMAIN" --standalone --force --server letsencrypt
+        ~/.acme.sh/acme.sh --install-cert -d "$DOMAIN" \
+            --key-file /usr/local/etc/xray/private.key \
+            --fullchain-file /usr/local/etc/xray/cert.crt
     fi
     
-    export PATH="$HOME/.acme.sh:$PATH"
-    ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt >/dev/null 2>&1 || true
+    mkdir -p /usr/local/etc/xray
     
-    ~/.acme.sh/acme.sh --issue -d "$DOMAIN" --standalone --force --server letsencrypt
-    ~/.acme.sh/acme.sh --install-cert -d "$DOMAIN" \
-        --key-file /usr/local/etc/xray/private.key \
-        --fullchain-file /usr/local/etc/xray/cert.crt
-    
-    cat > /usr/local/etc/xray/config.json <<EOF
+    if [[ $IP_MODE -eq 1 ]]; then
+        # IP直连模式 - 不需要证书文件，但Reality不需要证书
+        cat > /usr/local/etc/xray/config.json <<EOF
 {
     "log": {
         "access": "/var/log/xray/access.log",
@@ -799,11 +823,11 @@ install_vless() {
                 "security": "reality",
                 "realitySettings": {
                     "show": false,
-                    "dest": "www.cloudflare.com:443",
+                    "dest": "www.bing.com:443",
                     "xver": 0,
                     "serverNames": [
-                        "www.cloudflare.com",
-                        "cloudflare.com"
+                        "www.bing.com",
+                        "bing.com"
                     ],
                     "privateKey": "$PRIVATE_KEY",
                     "publicKey": "$PUBLIC_KEY",
@@ -839,14 +863,98 @@ install_vless() {
     }
 }
 EOF
-    
-    mkdir -p /usr/local/etc/xray
+    else
+        # 有域名模式
+        cat > /usr/local/etc/xray/config.json <<EOF
+{
+    "log": {
+        "access": "/var/log/xray/access.log",
+        "error": "/var/log/xray/error.log",
+        "loglevel": "warning"
+    },
+    "inbounds": [
+        {
+            "port": $PORT,
+            "protocol": "vless",
+            "settings": {
+                "clients": [
+                    {
+                        "id": "$UUID",
+                        "flow": "xtls-rprx-vision"
+                    }
+                ],
+                "decryption": "none"
+            },
+            "streamSettings": {
+                "network": "tcp",
+                "security": "reality",
+                "realitySettings": {
+                    "show": false,
+                    "dest": "www.bing.com:443",
+                    "xver": 0,
+                    "serverNames": [
+                        "www.bing.com",
+                        "bing.com",
+                        "$DOMAIN"
+                    ],
+                    "privateKey": "$PRIVATE_KEY",
+                    "publicKey": "$PUBLIC_KEY",
+                    "shortIds": [
+                        "$SHORT_ID"
+                    ]
+                }
+            },
+            "sniffing": {
+                "enabled": true,
+                "destOverride": ["http", "tls", "quic"]
+            }
+        }
+    ],
+    "outbounds": [
+        {
+            "protocol": "freedom",
+            "tag": "direct"
+        },
+        {
+            "protocol": "blackhole",
+            "tag": "block"
+        }
+    ],
+    "routing": {
+        "rules": [
+            {
+                "protocol": ["bittorrent"],
+                "outboundTag": "block",
+                "type": "field"
+            }
+        ]
+    }
+}
+EOF
+    fi
     
     systemctl restart xray
     
-    cat > "$CONFIG_DIR/vless-info.txt" <<EOF
-========== Vless 配置信息 ==========
-协议: Vless + Reality
+    if [[ $IP_MODE -eq 1 ]]; then
+        cat > "$CONFIG_DIR/vless-info.txt" <<EOF
+========== Vless + Reality (IP直连) ==========
+服务器地址: $SERVER_IP
+端口: $PORT
+UUID: $UUID
+流控: xtls-rprx-vision
+传输协议: tcp
+安全: reality
+Public Key: $PUBLIC_KEY
+Short ID: $SHORT_ID
+SNI: www.bing.com
+伪装目标: www.bing.com:443
+====================================
+EOF
+        
+        local VLESS_LINK="vless://${UUID}@${SERVER_IP}:${PORT}?security=reality&sni=www.bing.com&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp&flow=xtls-rprx-vision#Vless-IP-$(hostname)"
+    else
+        cat > "$CONFIG_DIR/vless-info.txt" <<EOF
+========== Vless + Reality ==========
 服务器地址: $DOMAIN
 端口: $PORT
 UUID: $UUID
@@ -855,11 +963,13 @@ UUID: $UUID
 安全: reality
 Public Key: $PUBLIC_KEY
 Short ID: $SHORT_ID
-SNI: www.cloudflare.com
+SNI: www.bing.com
+伪装目标: www.bing.com:443
 ====================================
 EOF
-    
-    local VLESS_LINK="vless://${UUID}@${DOMAIN}:${PORT}?security=reality&sni=www.cloudflare.com&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp&flow=xtls-rprx-vision#Vless-Reality-$(hostname)"
+        
+        local VLESS_LINK="vless://${UUID}@${DOMAIN}:${PORT}?security=reality&sni=www.bing.com&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp&flow=xtls-rprx-vision#Vless-Reality-$(hostname)"
+    fi
     
     echo "$VLESS_LINK" > "$CONFIG_DIR/vless-link.txt"
     
@@ -868,7 +978,9 @@ EOF
         qrencode -o "$CONFIG_DIR/vless-qr.png" "$VLESS_LINK"
     fi
     
-    (crontab -l 2>/dev/null | grep -v "acme.sh"; echo "0 3 * * * ~/.acme.sh/acme.sh --cron --home ~/.acme.sh >/dev/null 2>&1 && systemctl restart xray") | crontab -
+    if [[ $IP_MODE -eq 0 ]]; then
+        (crontab -l 2>/dev/null | grep -v "acme.sh"; echo "0 3 * * * ~/.acme.sh/acme.sh --cron --home ~/.acme.sh >/dev/null 2>&1 && systemctl restart xray") | crontab -
+    fi
     
     clear
     echo -e "${GREEN}========================================${NC}"
@@ -904,6 +1016,16 @@ install_hysteria2() {
     local DOMAIN=$(get_domain "Hysteria2")
     if [[ $? -ne 0 ]]; then return; fi
     
+    # 检查是否是IP直连模式
+    local IP_MODE=0
+    local SERVER_IP=""
+    if [[ "$DOMAIN" == "__IP_DIRECT__" ]]; then
+        IP_MODE=1
+        SERVER_IP=$(curl -s -4 https://api.ipify.org)
+        DOMAIN="$SERVER_IP"
+        log "使用IP直连模式，服务器IP: $SERVER_IP"
+    fi
+    
     log "正在安装 Hysteria2..."
     
     bash <(curl -fsSL https://get.hy2.sh/)
@@ -913,9 +1035,16 @@ install_hysteria2() {
     
     mkdir -p /etc/hysteria
     openssl ecparam -genkey -name prime256v1 -out /etc/hysteria/server.key
-    openssl req -new -x509 -days 3650 -key /etc/hysteria/server.key \
-        -out /etc/hysteria/server.crt -subj "/CN=$DOMAIN" \
-        -addext "subjectAltName=DNS:$DOMAIN"
+    
+    if [[ $IP_MODE -eq 1 ]]; then
+        openssl req -new -x509 -days 3650 -key /etc/hysteria/server.key \
+            -out /etc/hysteria/server.crt -subj "/CN=$SERVER_IP" \
+            -addext "subjectAltName=IP:$SERVER_IP"
+    else
+        openssl req -new -x509 -days 3650 -key /etc/hysteria/server.key \
+            -out /etc/hysteria/server.crt -subj "/CN=$DOMAIN" \
+            -addext "subjectAltName=DNS:$DOMAIN"
+    fi
     
     cat > /etc/hysteria/config.yaml <<EOF
 listen: :$PORT
@@ -946,7 +1075,20 @@ EOF
     systemctl enable hysteria-server
     systemctl restart hysteria-server
     
-    cat > "$CONFIG_DIR/hysteria2-info.txt" <<EOF
+    if [[ $IP_MODE -eq 1 ]]; then
+        cat > "$CONFIG_DIR/hysteria2-info.txt" <<EOF
+========== Hysteria2 (IP直连) ==========
+服务器地址: $SERVER_IP
+端口: $PORT
+密码: $PASSWORD
+传输协议: udp
+TLS: 自签名证书
+SNI: $SERVER_IP
+注意: 客户端需允许不安全连接
+=======================================
+EOF
+    else
+        cat > "$CONFIG_DIR/hysteria2-info.txt" <<EOF
 ========== Hysteria2 配置信息 ==========
 服务器地址: $DOMAIN
 端口: $PORT
@@ -956,8 +1098,13 @@ TLS: 自签名证书
 SNI: $DOMAIN
 =======================================
 EOF
+    fi
     
-    local HY2_LINK="hysteria2://${PASSWORD}@${DOMAIN}:${PORT}?sni=${DOMAIN}&insecure=1#Hysteria2-$(hostname)"
+    if [[ $IP_MODE -eq 1 ]]; then
+        local HY2_LINK="hysteria2://${PASSWORD}@${SERVER_IP}:${PORT}?sni=${SERVER_IP}&insecure=1#Hysteria2-IP-$(hostname)"
+    else
+        local HY2_LINK="hysteria2://${PASSWORD}@${DOMAIN}:${PORT}?sni=${DOMAIN}&insecure=1#Hysteria2-$(hostname)"
+    fi
     echo "$HY2_LINK" > "$CONFIG_DIR/hysteria2-link.txt"
     
     if command -v qrencode &>/dev/null; then
@@ -1071,26 +1218,79 @@ install_vmess() {
     local DOMAIN=$(get_domain "VMess")
     if [[ $? -ne 0 ]]; then return; fi
     
+    # 检查是否是IP直连模式
+    local IP_MODE=0
+    local SERVER_IP=""
+    if [[ "$DOMAIN" == "__IP_DIRECT__" ]]; then
+        IP_MODE=1
+        SERVER_IP=$(curl -s -4 https://api.ipify.org)
+        DOMAIN="$SERVER_IP"
+        log "使用IP直连模式，服务器IP: $SERVER_IP"
+    fi
+    
     install_xray
     
     local PORT=$(shuf -i 10000-65000 -n 1)
     local UUID=$(xray uuid)
     local WS_PATH="/$(openssl rand -hex 8)"
     
-    log "正在申请 SSL 证书..."
-    
-    if [[ ! -f ~/.acme.sh/acme.sh ]]; then
-        curl https://get.acme.sh | sh
+    if [[ $IP_MODE -eq 0 ]]; then
+        # 有域名模式 - 申请证书
+        log "正在申请 SSL 证书..."
+        
+        if [[ ! -f ~/.acme.sh/acme.sh ]]; then
+            curl https://get.acme.sh | sh
+        fi
+        
+        export PATH="$HOME/.acme.sh:$PATH"
+        ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt >/dev/null 2>&1 || true
+        ~/.acme.sh/acme.sh --issue -d "$DOMAIN" --standalone --force --server letsencrypt
+        ~/.acme.sh/acme.sh --install-cert -d "$DOMAIN" \
+            --key-file /usr/local/etc/xray/vmess-private.key \
+            --fullchain-file /usr/local/etc/xray/vmess-cert.crt
     fi
     
-    export PATH="$HOME/.acme.sh:$PATH"
-    ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt >/dev/null 2>&1 || true
-    ~/.acme.sh/acme.sh --issue -d "$DOMAIN" --standalone --force --server letsencrypt
-    ~/.acme.sh/acme.sh --install-cert -d "$DOMAIN" \
-        --key-file /usr/local/etc/xray/vmess-private.key \
-        --fullchain-file /usr/local/etc/xray/vmess-cert.crt
-    
-    cat > /usr/local/etc/xray/vmess.json <<EOF
+    if [[ $IP_MODE -eq 1 ]]; then
+        # IP直连模式 - 无TLS
+        cat > /usr/local/etc/xray/vmess.json <<EOF
+{
+    "log": {
+        "access": "/var/log/xray/vmess-access.log",
+        "error": "/var/log/xray/vmess-error.log",
+        "loglevel": "warning"
+    },
+    "inbounds": [
+        {
+            "port": $PORT,
+            "protocol": "vmess",
+            "settings": {
+                "clients": [
+                    {
+                        "id": "$UUID",
+                        "alterId": 0
+                    }
+                ]
+            },
+            "streamSettings": {
+                "network": "ws",
+                "wsSettings": {
+                    "path": "$WS_PATH"
+                },
+                "security": "none"
+            }
+        }
+    ],
+    "outbounds": [
+        {
+            "protocol": "freedom",
+            "tag": "direct"
+        }
+    ]
+}
+EOF
+    else
+        # 有域名模式
+        cat > /usr/local/etc/xray/vmess.json <<EOF
 {
     "log": {
         "access": "/var/log/xray/vmess-access.log",
@@ -1134,12 +1334,28 @@ install_vmess() {
     ]
 }
 EOF
+    fi
     
     cp /usr/local/etc/xray/vmess.json /usr/local/etc/xray/config.json
     systemctl restart xray
     
-    cat > "$CONFIG_DIR/vmess-info.txt" <<EOF
-========== VMess 配置信息 ==========
+    if [[ $IP_MODE -eq 1 ]]; then
+        cat > "$CONFIG_DIR/vmess-info.txt" <<EOF
+========== VMess + WebSocket (IP直连) ==========
+服务器地址: $SERVER_IP
+端口: $PORT
+UUID: $UUID
+额外ID: 0
+传输协议: ws
+WebSocket路径: $WS_PATH
+TLS: 关闭 (IP直连无TLS)
+====================================
+EOF
+        
+        local VMESS_JSON='{"v":"2","ps":"VMess-IP-'$(hostname)'","add":"'$SERVER_IP'","port":"'$PORT'","id":"'$UUID'","aid":"0","scy":"auto","net":"ws","type":"none","host":"'$SERVER_IP'","path":"'$WS_PATH'","tls":"","sni":""}'
+    else
+        cat > "$CONFIG_DIR/vmess-info.txt" <<EOF
+========== VMess + WebSocket ==========
 服务器地址: $DOMAIN
 端口: $PORT
 UUID: $UUID
@@ -1149,8 +1365,10 @@ WebSocket路径: $WS_PATH
 TLS: 开启
 ====================================
 EOF
+        
+        local VMESS_JSON='{"v":"2","ps":"VMess-'$(hostname)'","add":"'$DOMAIN'","port":"'$PORT'","id":"'$UUID'","aid":"0","scy":"auto","net":"ws","type":"none","host":"'$DOMAIN'","path":"'$WS_PATH'","tls":"tls","sni":"'$DOMAIN'"}'
+    fi
     
-    local VMESS_JSON='{"v":"2","ps":"VMess-'$(hostname)'","add":"'$DOMAIN'","port":"'$PORT'","id":"'$UUID'","aid":"0","scy":"auto","net":"ws","type":"none","host":"'$DOMAIN'","path":"'$WS_PATH'","tls":"tls","sni":"'$DOMAIN'"}'
     local VMESS_LINK="vmess://$(echo -n "$VMESS_JSON" | base64 -w 0)"
     echo "$VMESS_LINK" > "$CONFIG_DIR/vmess-link.txt"
     

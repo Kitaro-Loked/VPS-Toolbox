@@ -2,16 +2,16 @@
 # Auto-fix CRLF: convert Windows line endings if present
 sed -i "s/\r$//" "$0" 2>/dev/null || true
 # ============================================================
-# VPS Toolbox - One-click deploy script
+# VPS Toolbox - One-Click Deployment
 # Features: DDNS/WARP/Vless/Hysteria2/SS/VMess/Trojan
 # Author: Kitaro-Loked
 # Repo: https://github.com/Kitaro-Loked/VPS-Toolbox
-# Version: 2.1.2
+# Version: 2.2.0
 # ============================================================
 
 set -e
 
-# Colors
+# 颜色定义
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -19,24 +19,24 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-# Global vars
+# 全局变量
 CONFIG_DIR="/etc/vps-toolbox"
 LOG_FILE="/var/log/vps-toolbox.log"
 DDNS_DOMAIN=""
 DDNS_PROVIDER=""
 DDNS_PASS=""
 
-# Log functions
+# 日志函数
 log() {
     echo -e "${GREEN}[$(date '+%Y-%m-%d %H:%M:%S')] $1${NC}" | tee -a "$LOG_FILE"
 }
 
 warn() {
-    echo -e "${YELLOW}[$(date '+%Y-%m-%d %H:%M:%S')] WARNING: $1${NC}" | tee -a "$LOG_FILE"
+    echo -e "${YELLOW}[$(date '+%Y-%m-%d %H:%M:%S')] 警告: $1${NC}" | tee -a "$LOG_FILE"
 }
 
 error() {
-    echo -e "${RED}[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: $1${NC}" | tee -a "$LOG_FILE"
+    echo -e "${RED}[$(date '+%Y-%m-%d %H:%M:%S')] 错误: $1${NC}" | tee -a "$LOG_FILE"
     exit 1
 }
 
@@ -44,21 +44,21 @@ info() {
     echo -e "${BLUE}[INFO] $1${NC}"
 }
 
-# Check root
+# 检查root权限
 check_root() {
     if [[ $EUID -ne 0 ]]; then
-        error "requestuse root ????scrision"
+        error "Please run as root"
     fi
 }
 
-# Check system
+# 检查系统类型
 check_system() {
     if [[ -f /etc/os-release ]]; then
         . /etc/os-release
         OS=$NAME
         VER=$VERSION_ID
     else
-        error "no-brainerwaydetect?Ausystemtype"
+        error "无法检测操作系统类型"
     fi
     
     case $OS in
@@ -72,16 +72,16 @@ check_system() {
             PKG_MANAGER="dnf"
             ;;
         *)
-            error "notsupport??Ausystem: $OS"
+            error "不支持的操作系统: $OS"
             ;;
     esac
     
-    log "detecttosystem: $OS $VER"
+    log "检测到系统: $OS $VER"
 }
 
-# Install dependencies
+# 安装依赖
 install_dependencies() {
-    log "Installingbasicdependencies..."
+    log "正在安装基础依赖..."
     
     if [[ "$PKG_MANAGER" == "apt" ]]; then
         apt-get update -y >/dev/null 2>&1
@@ -95,31 +95,31 @@ install_dependencies() {
     
     mkdir -p "$CONFIG_DIR"
     
-    log "Dependencies installed"
+    log "基础Dependencies installed"
 }
 
-# ==================== DDNS Features ====================
+# ==================== DDNS 功能 ====================
 
 setup_ddns() {
     clear
     echo ""
     echo -e "${CYAN}============================================================${NC}"
-    echo -e "${CYAN}                   DDNS Domain Setup${NC}"
+    echo -e "${CYAN}                   DDNS Domain Management${NC}"
     echo -e "${CYAN}============================================================${NC}"
     echo ""
-    echo -e "${YELLOW}Select DDNS provider:${NC}"
+    echo -e "${YELLOW}请选择 DDNS 服务商:${NC}"
     echo ""
-    echo -e "  ${GREEN}1. Auto-Apply DuckDNS (easiest)${NC}"
-    echo "     No website signup, apply via command line"
+    echo -e "  ${GREEN}1. Auto DuckDNS (Easiest)${NC}"
+    echo "     无需注册网站，直接命令行申请"
     echo ""
-    echo "  2. Use Public IP (no domain)"
-    echo "     Show server IP, good for Shadowsocks etc."
+    echo "  2. 使用Public IP (无需域名)"
+    echo "     直接显示服务器IP，适合Shadowsocks等"
     echo ""
-    echo "  3. Cloudflare (have domain)"
-    echo "  4. No-IP (have account)"
-    echo "  5. Back??ple"
+    echo "  3. Cloudflare (已有域名)"
+    echo "  4. No-IP (已有账号)"
+    echo "  5. Back to main menu"
     echo ""
-    read -rp "requestselect [1-5]: " ddns_choice
+    read -rp "Select [1-5]: " ddns_choice
     
     case $ddns_choice in
         1) setup_duckdns_auto ;;
@@ -127,86 +127,86 @@ setup_ddns() {
         3) setup_cloudflare_ddns ;;
         4) setup_noip ;;
         5) return ;;
-        *) warn "Invalid choice"; sleep 2; setup_ddns ;;
+        *) warn "Invalid selection"; sleep 2; setup_ddns ;;
     esac
 }
 
-# showPublic IP
+# 显示Public IP
 show_public_ip() {
     echo ""
-    info "Getting public IP info..."
+    info "获取Public IP信息..."
     echo "----------------------------------------"
     
     local IPV4=$(curl -s -4 https://api.ipify.org 2>/dev/null || curl -s -4 https://ifconfig.me 2>/dev/null)
-    local IPV6=$(curl -s -6 https://api6.ipify.org 2>/dev/null || echo "?detectto")
+    local IPV6=$(curl -s -6 https://api6.ipify.org 2>/dev/null || echo "未检测到")
     
     echo ""
     echo -e "${GREEN}========================================${NC}"
-    echo -e "${GREEN}           Server Network Info${NC}"
+    echo -e "${GREEN}           服务器网络信息${NC}"
     echo -e "${GREEN}========================================${NC}"
     echo ""
-    echo -e "${CYAN}IPv4 Address:${NC} $IPV4"
-    echo -e "${CYAN}IPv6 Address:${NC} $IPV6"
+    echo -e "${CYAN}IPv4 地址:${NC} $IPV4"
+    echo -e "${CYAN}IPv6 地址:${NC} $IPV6"
     echo ""
-    echo -e "${YELLOW}Usage:${NC}"
-    echo "  - Shadowsocks can use IP directly"
-    echo "  - Hysteria2 can use IP + self-signed cert"
-    echo "  - Vless/VMess/Trojan need domain + cert"
+    echo -e "${YELLOW}使用说明:${NC}"
+    echo "  - Shadowsocks 可直接使用 IP 地址"
+    echo "  - Hysteria2 可使用 IP + 自签名证书"
+    echo "  - Vless/VMess/Trojan 需要域名+证书"
     echo ""
-    echo -e "${YELLOW}For domain, select:${NC}"
-    echo "  1. DuckDNS (Simplest)"
-    echo "  2. Cloudflare (Most stable)"
-    echo "  3. Back"
+    echo -e "${YELLOW}如需域名，请选择:${NC}"
+    echo "  1. DuckDNS (最简单)"
+    echo "  2. Cloudflare (最稳定)"
+    echo "  3. 返回"
     echo ""
-    read -rp "requestselect [1-3]: " ip_choice
+    read -rp "Select [1-3]: " ip_choice
     
     case $ip_choice in
         1) setup_duckdns ;;
         2) setup_cloudflare_ddns ;;
         3) return ;;
-        *) warn "Invalid choice"; sleep 2; show_public_ip ;;
+        *) warn "Invalid selection"; sleep 2; show_public_ip ;;
     esac
 }
 
 # Cloudflare DDNS
 setup_cloudflare_ddns() {
     echo ""
-    info "Cloudflare DDNS Setup"
+    info "Cloudflare DDNS 配置"
     echo "----------------------------------------"
     cf_token=""
     while [[ -z "$cf_token" ]]; do
-        read -rp "Enter Cloudflare API Token: " cf_token
+        read -rp "请输入 Cloudflare API Token: " cf_token
         cf_token=$(echo "$cf_token" | xargs)
         if [[ -z "$cf_token" ]]; then
-            warn "API Token cannot be empty, please re-enter"
+            warn "API Token cannot be empty"
         fi
     done
     
     cf_domain=""
     while [[ -z "$cf_domain" ]]; do
-        read -rp "Enter domain (e.g.: example.com): " cf_domain
+        read -rp "请输入域名 (例如: example.com): " cf_domain
         cf_domain=$(echo "$cf_domain" | xargs)
         if [[ -z "$cf_domain" ]]; then
-            warn "Domain cannot be empty, please re-enter"
+            warn "Domain cannot be empty"
         fi
     done
     
-    read -rp "Enter subdomain prefix (e.g.: vps，leave empty for root): " cf_subdomain
+    read -rp "请输入子域名前缀 (例如: vps，留空使用根域名): " cf_subdomain
     
-    log "Getting Zone ID..."
+    log "正在获取 Zone ID..."
     ZONE_ID=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones?name=$cf_domain" \
         -H "Authorization: Bearer $cf_token" \
         -H "Content-Type: application/json" | jq -r '.result[0].id')
     
     if [[ "$ZONE_ID" == "null" || -z "$ZONE_ID" ]]; then
-        error "Cannot get Zone ID, check API Token and domain"
+        error "无法获取 Zone ID，请检查 API Token 和域名"
     fi
     
     log "Zone ID: $ZONE_ID"
     
     PUBLIC_IP=$(curl -s -4 https://api.ipify.org || curl -s -4 https://ifconfig.me)
     if [[ -z "$PUBLIC_IP" ]]; then
-        error "Cannot get public IP"
+        error "无法获取Public IP地址"
     fi
     
     if [[ -n "$cf_subdomain" ]]; then
@@ -220,13 +220,13 @@ setup_cloudflare_ddns() {
         -H "Content-Type: application/json" | jq -r '.result[0].id')
     
     if [[ "$RECORD_ID" == "null" || -z "$RECORD_ID" ]]; then
-        log "Creating DNS record..."
+        log "创建 DNS 记录..."
         curl -s -X POST "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records" \
             -H "Authorization: Bearer $cf_token" \
             -H "Content-Type: application/json" \
             --data "{\"type\":\"A\",\"name\":\"$FULL_DOMAIN\",\"content\":\"$PUBLIC_IP\",\"ttl\":120,\"proxied\":false}" >/dev/null
     else
-        log "Updating DNS record..."
+        log "更新 DNS 记录..."
         curl -s -X PUT "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records/$RECORD_ID" \
             -H "Authorization: Bearer $cf_token" \
             -H "Content-Type: application/json" \
@@ -269,51 +269,51 @@ EOF
     
     DDNS_DOMAIN="$FULL_DOMAIN"
     
-    log "DDNS configured!"
-    log "Domain: $FULL_DOMAIN"
-    log "Current IP: $PUBLIC_IP"
-    log "Auto-update cron job added (every 5 min)"
+    log "DDNS 配置完成!"
+    log "域名: $FULL_DOMAIN"
+    log "当前IP: $PUBLIC_IP"
+    log "已添加自动更新定时任务 (每5分钟)"
     
     echo ""
     read -rp "Press Enter to continue..."
 }
 
-# DuckDNS - ????applyrequest（no-brainerneedRegistering??）
+# DuckDNS - 一键自动申请（无需注册网站）
 setup_duckdns_auto() {
     echo ""
-    info "Auto-applying DuckDNS domain..."
+    info "正在一键申请 DuckDNS 域名..."
     echo "----------------------------------------"
     
-    # getPublic IP
+    # 获取Public IP
     local PUBLIC_IP=$(curl -s -4 https://api.ipify.org 2>/dev/null || curl -s -4 https://ifconfig.me 2>/dev/null)
     if [[ -z "$PUBLIC_IP" ]]; then
-        error "no-brainerwaygetPublic IP"
+        error "无法获取Public IP"
     fi
     
-    # generaterandomsubDomain（8?random????）
+    # 生成随机子域名（8位随机字母数字）
     local RANDOM_SUB=$(tr -dc 'a-z0-9' < /dev/urandom | head -c 8)
     local DUCK_DOMAIN="${RANDOM_SUB}"
     local DDNS_DOMAIN="${RANDOM_SUB}.duckdns.org"
     
     echo ""
-    echo -e "${CYAN}Generated random subdomain:${NC} $RANDOM_SUB"
+    echo -e "${CYAN}生成的随机子域名:${NC} $RANDOM_SUB"
     echo -e "${CYAN}Full domain:${NC} $DDNS_DOMAIN"
     echo -e "${CYAN}Public IP:${NC} $PUBLIC_IP"
     echo ""
     
-    # DuckDNS ??no-brainer token create（use "none" Au? token cancreatetemporaryDomain）
-    # ?up??so??use DuckDNS ?sim?Registering??
-    # ??? DuckDNS support email get token
+    # DuckDNS 允许无 token 创建（使用 "none" 作为 token 可以创建临时域名）
+    # 但更好的方式是使用 DuckDNS 的简化注册流程
+    # 实际上 DuckDNS 支持用 email 获取 token
     
-    echo -e "${YELLOW}DuckDNS Auto-Apply Guide:${NC}"
-    echo "  DuckDNS needs Token to update domain。"
-    echo "  Please select how to get Token:"
+    echo -e "${YELLOW}DuckDNS Auto-Apply说明:${NC}"
+    echo "  DuckDNS requires a Token。"
+    echo "  Select how to obtain:"
     echo ""
-    echo "  1. I already have DuckDNS Token (enter directly)"
-    echo "  2. Open DuckDNS signup page (get Token)"
-    echo "  3. Use temporary solution (IP direct, no domain)"
+    echo "  1. I already have a DuckDNS Token"
+    echo "  2. Open DuckDNS signup page"
+    echo "  3. Use IP directly (no domain)"
     echo ""
-    read -rp "requestselect [1-3]: " duck_choice
+    read -rp "Select [1-3]: " duck_choice
     
     case $duck_choice in
         1)
@@ -324,21 +324,38 @@ setup_duckdns_auto() {
                 # Trim whitespace
                 duck_token=$(echo "$duck_token" | xargs)
                 if [[ -z "$duck_token" ]]; then
-                    warn "Token cannot be empty, please re-enter"
+                    warn "Token cannot be empty"
                 fi
             done
             
-            # ??updateDomain
+            # Updating domain
             local RESULT=$(curl -s "https://www.duckdns.org/update?domains=$DUCK_DOMAIN&token=$duck_token&ip=$PUBLIC_IP")
             
             if [[ "$RESULT" == "OK" ]]; then
-                log "DuckDNS domain application successful!"
+                log "DuckDNS domain updated!"
             else
                 warn "Domain update returned: $RESULT"
-                warn "If domain does not exist, DuckDNS will auto-create"
+                warn "DuckDNS will auto-create if not exists"
             fi
             
-            # saveConfiguring
+            # Wait for DNS propagation
+            log "Waiting for DNS propagation，up to 60s..."
+            local DNS_READY=0
+            for i in {1..12}; do
+                sleep 5
+                if host "$DDNS_DOMAIN" >/dev/null 2>&1 || nslookup "$DDNS_DOMAIN" >/dev/null 2>&1; then
+                    DNS_READY=1
+                    log "DNS is ready!"
+                    break
+                fi
+                echo -n "."
+            done
+            echo ""
+            if [[ $DNS_READY -eq 0 ]]; then
+                warn "DNS not fully propagated，continuing anyway..."
+            fi
+            
+            # 保存配置
             cat > "$CONFIG_DIR/ddns.conf" <<EOF
 DDNS_PROVIDER=duckdns
 DUCK_TOKEN=$duck_token
@@ -360,49 +377,49 @@ EOF
             
             echo ""
             echo -e "${GREEN}========================================${NC}"
-            echo -e "${GREEN}      DuckDNS configured!${NC}"
+            echo -e "${GREEN}      DuckDNS 配置完成!${NC}"
             echo -e "${GREEN}========================================${NC}"
             echo ""
-            echo -e "${CYAN}Domain:${NC} $DDNS_DOMAIN"
+            echo -e "${CYAN}域名:${NC} $DDNS_DOMAIN"
             echo -e "${CYAN}Token:${NC} $duck_token"
             echo -e "${CYAN}IP:${NC} $PUBLIC_IP"
             echo ""
-            log "Auto-update cron job added (every 5 min)"
+            log "已添加自动更新定时任务 (每5分钟)"
             ;;
         2)
             echo ""
-            echo -e "${CYAN}Follow these steps to get DuckDNS Token:${NC}"
-            echo "  1. open https://www.duckdns.org"
-            echo "  2. Login with Google/GitHub/Reddit/Twitter"
-            echo "  3. Create a subdomain (e.g. myvps)"
-            echo "  4. Copy the Token shown on page"
-            echo "  5. Come back here and select '1. ?al?? Token'"
+            echo -e "${CYAN}请按以下步骤获取 DuckDNS Token:${NC}"
+            echo "  1. 打开 https://www.duckdns.org"
+            echo "  2. 用 Google/GitHub/Reddit/Twitter 账号登录"
+            echo "  3. 创建一个子域名 (例如: myvps)"
+            echo "  4. 复制页面显示的 Token"
+            echo "  5. 回到这里选择 '1. 我已经有 Token'"
             echo ""
             
-            # ??commandopen???（?can）
+            # 尝试用命令打开浏览器（如果可用）
             if command -v xdg-open &>/dev/null; then
                 xdg-open "https://www.duckdns.org" 2>/dev/null || true
             fi
             
-            read -rp "?back??Back DuckDNS ?ple..."
+            read -rp "按回车键返回 DuckDNS 菜单..."
             setup_duckdns_auto
             return
             ;;
         3)
             echo ""
-            info "Using public IP direct access..."
+            info "使用Public IP直接..."
             echo ""
             echo -e "${GREEN}========================================${NC}"
-            echo -e "${GREEN}           Server Network Info${NC}"
+            echo -e "${GREEN}           服务器网络信息${NC}"
             echo -e "${GREEN}========================================${NC}"
             echo ""
-            echo -e "${CYAN}IPv4 Address:${NC} $PUBLIC_IP"
+            echo -e "${CYAN}IPv4 地址:${NC} $PUBLIC_IP"
             echo ""
-            echo -e "${YELLOW}Tip:${NC} Shadowsocks or Hysteria2 can use this IP directly"
+            echo -e "${YELLOW}提示:${NC} 安装 Shadowsocks 或 Hysteria2 时可以直接使用此IP"
             echo ""
             ;;
         *)
-            warn "Invalid choice"
+            warn "Invalid selection"
             sleep 2
             setup_duckdns_auto
             return
@@ -413,26 +430,26 @@ EOF
     read -rp "Press Enter to continue..."
 }
 
-# DuckDNS - ??Configuring（al?Token）
+# DuckDNS - 手动配置（已有Token）
 setup_duckdns() {
     echo ""
-    info "DuckDNS Setup"
+    info "DuckDNS 配置"
     echo "----------------------------------------"
     duck_token=""
     while [[ -z "$duck_token" ]]; do
         read -rp "Enter DuckDNS Token: " duck_token
         duck_token=$(echo "$duck_token" | xargs)
         if [[ -z "$duck_token" ]]; then
-            warn "Token cannot be empty, please re-enter"
+            warn "Token cannot be empty"
         fi
     done
     
     duck_domain=""
     while [[ -z "$duck_domain" ]]; do
-        read -rp "Enter subdomain (e.g.: myvps): " duck_domain
+        read -rp "请输入子域名 (例如: myvps): " duck_domain
         duck_domain=$(echo "$duck_domain" | xargs)
         if [[ -z "$duck_domain" ]]; then
-            warn "Subdomain cannot be empty, please re-enter"
+            warn "子Domain cannot be empty"
         fi
     done
     
@@ -460,7 +477,7 @@ EOF
     
     (crontab -l 2>/dev/null | grep -v "update-ddns"; echo "*/5 * * * * $CONFIG_DIR/update-ddns.sh >/dev/null 2>&1") | crontab -
     
-    log "DuckDNS configured! Domain: $DDNS_DOMAIN"
+    log "DuckDNS 配置完成! 域名: $DDNS_DOMAIN"
     echo ""
     read -rp "Press Enter to continue..."
 }
@@ -468,33 +485,33 @@ EOF
 # No-IP
 setup_noip() {
     echo ""
-    info "No-IP Setup"
+    info "No-IP 配置"
     echo "----------------------------------------"
     noip_user=""
     while [[ -z "$noip_user" ]]; do
-        read -rp "Enter No-IP username: " noip_user
+        read -rp "请输入 No-IP 用户名: " noip_user
         noip_user=$(echo "$noip_user" | xargs)
         if [[ -z "$noip_user" ]]; then
-            warn "Username cannot be empty, please re-enter"
+            warn "用户名不能为空，请重新输入"
         fi
     done
     
     noip_pass=""
     while [[ -z "$noip_pass" ]]; do
-        read -rsp "Enter No-IP password: " noip_pass
+        read -rsp "请输入 No-IP Password: " noip_pass
         echo ""
         noip_pass=$(echo "$noip_pass" | xargs)
         if [[ -z "$noip_pass" ]]; then
-            warn "Password cannot be empty, please re-enter"
+            warn "Password不能为空，请重新输入"
         fi
     done
     
     noip_host=""
     while [[ -z "$noip_host" ]]; do
-        read -rp "Enter hostname (e.g.: myvps.ddns.net): " noip_host
+        read -rp "请输入主机名 (例如: myvps.ddns.net): " noip_host
         noip_host=$(echo "$noip_host" | xargs)
         if [[ -z "$noip_host" ]]; then
-            warn "Hostname cannot be empty, please re-enter"
+            warn "主机名不能为空，请重新输入"
         fi
     done
     
@@ -523,24 +540,24 @@ EOF
     
     (crontab -l 2>/dev/null | grep -v "update-ddns"; echo "*/5 * * * * $CONFIG_DIR/update-ddns.sh >/dev/null 2>&1") | crontab -
     
-    log "No-IP SetupComplete! Domain: $DDNS_DOMAIN"
+    log "No-IP 配置完成! 域名: $DDNS_DOMAIN"
     echo ""
     read -rp "Press Enter to continue..."
 }
 
-# Get or enter domain
+# 获取或输入域名
 get_domain() {
     local PROTOCOL_NAME=$1
     local NEED_DOMAIN=${2:-"yes"}
     
-    # If no domain needed, return IP directly
+    # If protocol does not need domain, return IP
     if [[ "$NEED_DOMAIN" == "no" ]]; then
         local SERVER_IP=$(curl -s -4 https://api.ipify.org)
         echo "$SERVER_IP"
         return 0
     fi
     
-    # Check existing DDNS config
+    # 检查是否已有DDNS配置
     if [[ -f "$CONFIG_DIR/ddns.conf" ]]; then
         source "$CONFIG_DIR/ddns.conf"
         if [[ -n "$DDNS_DOMAIN" ]]; then
@@ -553,14 +570,15 @@ get_domain() {
         fi
     fi
     
-    # Provide options
+    # 提供选择
     echo ""
     echo -e "${YELLOW}Select domain source:${NC}"
-    echo "  1. Auto-Apply DuckDNS (easiest)"
-    echo "  2. Use your own domain"
-    echo "  3. Go back"
+    echo "  1. Auto DuckDNS (Easiest)"
+    echo "  2. Use my own domain"
+    echo "  3. Use IP directly (no domain/cert)"
+    echo "  4. Go back"
     echo ""
-    read -rp "requestselect [1-3]: " domain_choice
+    read -rp "Select [1-4]: " domain_choice
     
     case $domain_choice in
         1)
@@ -578,45 +596,50 @@ get_domain() {
                 read -rp "Enter your domain: " custom_domain
                 custom_domain=$(echo "$custom_domain" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
                 if [[ -z "$custom_domain" ]]; then
-                    warn "Domain cannot be empty, please re-enter"
+                    warn "Domain cannot be empty"
                 fi
             done
             echo "$custom_domain"
             return 0
             ;;
         3)
+            # IP direct mode - 返回特殊标记
+            echo "__IP_DIRECT__"
+            return 0
+            ;;
+        4)
             return 1
             ;;
         *)
-            error "Invalid choice"
+            error "Invalid selection"
             ;;
     esac
 }
 
-# ==================== WARP Features ====================
+# ==================== WARP 功能 ====================
 
 setup_warp() {
     clear
     echo ""
     echo -e "${CYAN}============================================================${NC}"
-    echo -e "${CYAN}                      WARP Setup${NC}"
+    echo -e "${CYAN}                      WARP Configuration${NC}"
     echo -e "${CYAN}============================================================${NC}"
     echo ""
     
     if command -v warp-cli &>/dev/null; then
-        info "WARP already installed"
+        info "WARP 已安装"
         echo ""
-        echo "  1. Start WARP"
-        echo "  2. Stop WARP"
-        echo "  3. Check status"
-        echo "  4. Uninstall WARP"
-        echo "  5. Back??ple"
+        echo "  1. 启动 WARP"
+        echo "  2. 停止 WARP"
+        echo "  3. 查看状态"
+        echo "  4. 卸载 WARP"
+        echo "  5. Back to main menu"
         echo ""
-        read -rp "requestselect [1-5]: " warp_choice
+        read -rp "Select [1-5]: " warp_choice
         
         case $warp_choice in
-            1) warp-cli connect; log "WARP alStarting" ;;
-            2) warp-cli disconnect; log "WARP alstopped" ;;
+            1) warp-cli connect; log "WARP 已启动" ;;
+            2) warp-cli disconnect; log "WARP 已停止" ;;
             3) warp-cli status ;;
             4) uninstall_warp ;;
             5) return ;;
@@ -624,23 +647,23 @@ setup_warp() {
         return
     fi
     
-    echo -e "${YELLOW}Select installation method:${NC}"
-    echo "  1. Official Cloudflare WARP (Recommended)"
-    echo "  2. WireGuard mode (wgcf)"
-    echo "  3. Back??ple"
+    echo -e "${YELLOW}请选择安装方式:${NC}"
+    echo "  1. 官方 Cloudflare WARP (推荐)"
+    echo "  2. WireGuard 模式 (wgcf)"
+    echo "  3. Back to main menu"
     echo ""
-    read -rp "requestselect [1-3]: " warp_install_choice
+    read -rp "Select [1-3]: " warp_install_choice
     
     case $warp_install_choice in
         1) install_warp_official ;;
         2) install_warp_wgcf ;;
         3) return ;;
-        *) warn "Invalid choice"; sleep 2; setup_warp ;;
+        *) warn "Invalid selection"; sleep 2; setup_warp ;;
     esac
 }
 
 install_warp_official() {
-    log "Installing Cloudflare WARP..."
+    log "正在安装 Cloudflare WARP..."
     
     if [[ "$PKG_MANAGER" == "apt" ]]; then
         curl -s https://pkg.cloudflareclient.com/pubkey.gpg | gpg --yes --dearmor --output /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
@@ -655,7 +678,7 @@ install_warp_official() {
     warp-cli connect
     warp-cli set-mode warp
     
-    log "WARP installed and started!"
+    log "WARP 安装并启动成功!"
     warp-cli status
     
     echo ""
@@ -663,7 +686,7 @@ install_warp_official() {
 }
 
 install_warp_wgcf() {
-    log "Installing wgcf (WireGuard WARP)..."
+    log "正在安装 wgcf (WireGuard WARP)..."
     
     if [[ "$PKG_MANAGER" == "apt" ]]; then
         apt-get install -y wireguard wireguard-tools
@@ -684,14 +707,14 @@ install_warp_wgcf() {
     systemctl enable wg-quick@warp
     systemctl start wg-quick@warp
     
-    log "wgcf WARP installed!"
+    log "wgcf WARP 安装成功!"
     
     echo ""
     read -rp "Press Enter to continue..."
 }
 
 uninstall_warp() {
-    log "Uninstalling WARP..."
+    log "正在卸载 WARP..."
     systemctl stop warp-svc 2>/dev/null || true
     systemctl disable warp-svc 2>/dev/null || true
     
@@ -706,34 +729,45 @@ uninstall_warp() {
     read -rp "Press Enter to continue..."
 }
 
-# ==================== Xray Coreinstalled ====================
+# ==================== Xray 核心安装 ====================
 
 install_xray() {
     if command -v xray &>/dev/null; then
-        log "Xray already installed, version: $(xray version | head -n1)"
+        log "Xray already installed，版本: $(xray version | head -n1)"
         return 0
     fi
     
-    log "Installing Xray core..."
+    log "正在安装 Xray 核心..."
     
     bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
     
     systemctl enable xray
-    log "Xray installed"
+    log "Xray 安装完成"
 }
 
-# ==================== Vless installed (needDomain) ====================
+# ==================== Vless 安装 (需要域名) ====================
 
 install_vless() {
     clear
     echo ""
     echo -e "${CYAN}============================================================${NC}"
-    echo -e "${CYAN}                    Vless + Reality Install${NC}"
+    echo -e "${CYAN}                    Vless + Reality Installation${NC}"
     echo -e "${CYAN}============================================================${NC}"
     echo ""
     
     local DOMAIN=$(get_domain "Vless")
     if [[ $? -ne 0 ]]; then return; fi
+    
+    # 检查是否是IP direct mode
+    local IP_MODE=0
+    local SERVER_IP=""
+    if [[ "$DOMAIN" == "__IP_DIRECT__" ]]; then
+        IP_MODE=1
+        SERVER_IP=$(curl -s -4 https://api.ipify.org)
+        DOMAIN="www.bing.com"  # Reality dest使用bing.com
+        log "IP direct mode, server IP: $SERVER_IP"
+        log "Reality camouflage target: www.bing.com:443"
+    fi
     
     install_xray
     
@@ -743,21 +777,28 @@ install_vless() {
     local PUBLIC_KEY=$(xray x25519 -i "$PRIVATE_KEY" | grep "Public key:" | awk '{print $3}')
     local SHORT_ID=$(openssl rand -hex 4)
     
-    log "Applying for SSL certificate..."
-    
-    if [[ ! -f ~/.acme.sh/acme.sh ]]; then
-        curl https://get.acme.sh | sh
+    if [[ $IP_MODE -eq 0 ]]; then
+        # Domain mode - applying cert
+        log "Applying for SSL certificate..."
+        
+        if [[ ! -f ~/.acme.sh/acme.sh ]]; then
+            curl https://get.acme.sh | sh
+        fi
+        
+        export PATH="$HOME/.acme.sh:$PATH"
+        ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt >/dev/null 2>&1 || true
+        
+        ~/.acme.sh/acme.sh --issue -d "$DOMAIN" --standalone --force --server letsencrypt
+        ~/.acme.sh/acme.sh --install-cert -d "$DOMAIN" \
+            --key-file /usr/local/etc/xray/private.key \
+            --fullchain-file /usr/local/etc/xray/cert.crt
     fi
     
-    export PATH="$HOME/.acme.sh:$PATH"
-    ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt >/dev/null 2>&1 || true
+    mkdir -p /usr/local/etc/xray
     
-    ~/.acme.sh/acme.sh --issue -d "$DOMAIN" --standalone --force --server letsencrypt
-    ~/.acme.sh/acme.sh --install-cert -d "$DOMAIN" \
-        --key-file /usr/local/etc/xray/private.key \
-        --fullchain-file /usr/local/etc/xray/cert.crt
-    
-    cat > /usr/local/etc/xray/config.json <<EOF
+    if [[ $IP_MODE -eq 1 ]]; then
+        # IP mode - no cert needed，但Reality不需要证书
+        cat > /usr/local/etc/xray/config.json <<EOF
 {
     "log": {
         "access": "/var/log/xray/access.log",
@@ -782,11 +823,11 @@ install_vless() {
                 "security": "reality",
                 "realitySettings": {
                     "show": false,
-                    "dest": "www.cloudflare.com:443",
+                    "dest": "www.bing.com:443",
                     "xver": 0,
                     "serverNames": [
-                        "www.cloudflare.com",
-                        "cloudflare.com"
+                        "www.bing.com",
+                        "bing.com"
                     ],
                     "privateKey": "$PRIVATE_KEY",
                     "publicKey": "$PUBLIC_KEY",
@@ -822,14 +863,98 @@ install_vless() {
     }
 }
 EOF
-    
-    mkdir -p /usr/local/etc/xray
+    else
+        # Domain mode
+        cat > /usr/local/etc/xray/config.json <<EOF
+{
+    "log": {
+        "access": "/var/log/xray/access.log",
+        "error": "/var/log/xray/error.log",
+        "loglevel": "warning"
+    },
+    "inbounds": [
+        {
+            "port": $PORT,
+            "protocol": "vless",
+            "settings": {
+                "clients": [
+                    {
+                        "id": "$UUID",
+                        "flow": "xtls-rprx-vision"
+                    }
+                ],
+                "decryption": "none"
+            },
+            "streamSettings": {
+                "network": "tcp",
+                "security": "reality",
+                "realitySettings": {
+                    "show": false,
+                    "dest": "www.bing.com:443",
+                    "xver": 0,
+                    "serverNames": [
+                        "www.bing.com",
+                        "bing.com",
+                        "$DOMAIN"
+                    ],
+                    "privateKey": "$PRIVATE_KEY",
+                    "publicKey": "$PUBLIC_KEY",
+                    "shortIds": [
+                        "$SHORT_ID"
+                    ]
+                }
+            },
+            "sniffing": {
+                "enabled": true,
+                "destOverride": ["http", "tls", "quic"]
+            }
+        }
+    ],
+    "outbounds": [
+        {
+            "protocol": "freedom",
+            "tag": "direct"
+        },
+        {
+            "protocol": "blackhole",
+            "tag": "block"
+        }
+    ],
+    "routing": {
+        "rules": [
+            {
+                "protocol": ["bittorrent"],
+                "outboundTag": "block",
+                "type": "field"
+            }
+        ]
+    }
+}
+EOF
+    fi
     
     systemctl restart xray
     
-    cat > "$CONFIG_DIR/vless-info.txt" <<EOF
-========== Vless ConfigInfo ==========
-Protocol: Vless + Reality
+    if [[ $IP_MODE -eq 1 ]]; then
+        cat > "$CONFIG_DIR/vless-info.txt" <<EOF
+========== Vless + Reality (IP直连) ==========
+Server: $SERVER_IP
+Port: $PORT
+UUID: $UUID
+Flow: xtls-rprx-vision
+Network: tcp
+Security: reality
+Public Key: $PUBLIC_KEY
+Short ID: $SHORT_ID
+SNI: www.bing.com
+Camouflage: www.bing.com:443
+====================================
+EOF
+        
+        local VLESS_LINK="vless://${UUID}@${SERVER_IP}:${PORT}?security=reality&sni=www.bing.com&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp&flow=xtls-rprx-vision#Vless-IP-$(hostname)"
+    else
+        cat > "$CONFIG_DIR/vless-info.txt" <<EOF
+========== Vless + Reality ==========
 Server: $DOMAIN
 Port: $PORT
 UUID: $UUID
@@ -838,11 +963,13 @@ Network: tcp
 Security: reality
 Public Key: $PUBLIC_KEY
 Short ID: $SHORT_ID
-SNI: www.cloudflare.com
+SNI: www.bing.com
+Camouflage: www.bing.com:443
 ====================================
 EOF
-    
-    local VLESS_LINK="vless://${UUID}@${DOMAIN}:${PORT}?security=reality&sni=www.cloudflare.com&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp&flow=xtls-rprx-vision#Vless-Reality-$(hostname)"
+        
+        local VLESS_LINK="vless://${UUID}@${DOMAIN}:${PORT}?security=reality&sni=www.bing.com&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp&flow=xtls-rprx-vision#Vless-Reality-$(hostname)"
+    fi
     
     echo "$VLESS_LINK" > "$CONFIG_DIR/vless-link.txt"
     
@@ -851,7 +978,9 @@ EOF
         qrencode -o "$CONFIG_DIR/vless-qr.png" "$VLESS_LINK"
     fi
     
-    (crontab -l 2>/dev/null | grep -v "acme.sh"; echo "0 3 * * * ~/.acme.sh/acme.sh --cron --home ~/.acme.sh >/dev/null 2>&1 && systemctl restart xray") | crontab -
+    if [[ $IP_MODE -eq 0 ]]; then
+        (crontab -l 2>/dev/null | grep -v "acme.sh"; echo "0 3 * * * ~/.acme.sh/acme.sh --cron --home ~/.acme.sh >/dev/null 2>&1 && systemctl restart xray") | crontab -
+    fi
     
     clear
     echo -e "${GREEN}========================================${NC}"
@@ -860,12 +989,12 @@ EOF
     echo ""
     cat "$CONFIG_DIR/vless-info.txt"
     echo ""
-    echo -e "${CYAN}Share link:${NC}"
+    echo -e "${CYAN}Share Link:${NC}"
     echo "$VLESS_LINK"
     echo ""
     
     if [[ -f "$CONFIG_DIR/vless-qr.png" ]]; then
-        echo -e "${CYAN}QR saved to: $CONFIG_DIR/vless-qr.png${NC}"
+        echo -e "${CYAN}QR code saved to: $CONFIG_DIR/vless-qr.png${NC}"
     fi
     
     echo ""
@@ -874,18 +1003,28 @@ EOF
     read -rp "Press Enter to continue..."
 }
 
-# ==================== Hysteria2 Install (needDomain) ====================
+# ==================== Hysteria2 Installation (需要域名) ====================
 
 install_hysteria2() {
     clear
     echo ""
     echo -e "${CYAN}============================================================${NC}"
-    echo -e "${CYAN}                      Hysteria2 Install${NC}"
+    echo -e "${CYAN}                      Hysteria2 Installation${NC}"
     echo -e "${CYAN}============================================================${NC}"
     echo ""
     
     local DOMAIN=$(get_domain "Hysteria2")
     if [[ $? -ne 0 ]]; then return; fi
+    
+    # 检查是否是IP direct mode
+    local IP_MODE=0
+    local SERVER_IP=""
+    if [[ "$DOMAIN" == "__IP_DIRECT__" ]]; then
+        IP_MODE=1
+        SERVER_IP=$(curl -s -4 https://api.ipify.org)
+        DOMAIN="$SERVER_IP"
+        log "IP direct mode, server IP: $SERVER_IP"
+    fi
     
     log "Installing Hysteria2..."
     
@@ -896,9 +1035,16 @@ install_hysteria2() {
     
     mkdir -p /etc/hysteria
     openssl ecparam -genkey -name prime256v1 -out /etc/hysteria/server.key
-    openssl req -new -x509 -days 3650 -key /etc/hysteria/server.key \
-        -out /etc/hysteria/server.crt -subj "/CN=$DOMAIN" \
-        -addext "subjectAltName=DNS:$DOMAIN"
+    
+    if [[ $IP_MODE -eq 1 ]]; then
+        openssl req -new -x509 -days 3650 -key /etc/hysteria/server.key \
+            -out /etc/hysteria/server.crt -subj "/CN=$SERVER_IP" \
+            -addext "subjectAltName=IP:$SERVER_IP"
+    else
+        openssl req -new -x509 -days 3650 -key /etc/hysteria/server.key \
+            -out /etc/hysteria/server.crt -subj "/CN=$DOMAIN" \
+            -addext "subjectAltName=DNS:$DOMAIN"
+    fi
     
     cat > /etc/hysteria/config.yaml <<EOF
 listen: :$PORT
@@ -929,18 +1075,36 @@ EOF
     systemctl enable hysteria-server
     systemctl restart hysteria-server
     
-    cat > "$CONFIG_DIR/hysteria2-info.txt" <<EOF
-========== Hysteria2 ConfigInfo ==========
+    if [[ $IP_MODE -eq 1 ]]; then
+        cat > "$CONFIG_DIR/hysteria2-info.txt" <<EOF
+========== Hysteria2 (IP Direct) ==========
+Server: $SERVER_IP
+Port: $PORT
+Password: $PASSWORD
+Network: udp
+TLS: Self-signed
+SNI: $SERVER_IP
+注意: 客户端需允许不Security连接
+=======================================
+EOF
+    else
+        cat > "$CONFIG_DIR/hysteria2-info.txt" <<EOF
+========== Hysteria2 Config ==========
 Server: $DOMAIN
 Port: $PORT
 Password: $PASSWORD
 Network: udp
-TLS: self-signed
+TLS: Self-signed
 SNI: $DOMAIN
 =======================================
 EOF
+    fi
     
-    local HY2_LINK="hysteria2://${PASSWORD}@${DOMAIN}:${PORT}?sni=${DOMAIN}&insecure=1#Hysteria2-$(hostname)"
+    if [[ $IP_MODE -eq 1 ]]; then
+        local HY2_LINK="hysteria2://${PASSWORD}@${SERVER_IP}:${PORT}?sni=${SERVER_IP}&insecure=1#Hysteria2-IP-$(hostname)"
+    else
+        local HY2_LINK="hysteria2://${PASSWORD}@${DOMAIN}:${PORT}?sni=${DOMAIN}&insecure=1#Hysteria2-$(hostname)"
+    fi
     echo "$HY2_LINK" > "$CONFIG_DIR/hysteria2-link.txt"
     
     if command -v qrencode &>/dev/null; then
@@ -950,32 +1114,32 @@ EOF
     
     clear
     echo -e "${GREEN}========================================${NC}"
-    echo -e "${GREEN}      Hysteria2 installed!${NC}"
+    echo -e "${GREEN}      Hysteria2 Installation成功!${NC}"
     echo -e "${GREEN}========================================${NC}"
     echo ""
     cat "$CONFIG_DIR/hysteria2-info.txt"
     echo ""
-    echo -e "${CYAN}Share link:${NC}"
+    echo -e "${CYAN}Share Link:${NC}"
     echo "$HY2_LINK"
     echo ""
     
     if [[ -f "$CONFIG_DIR/hysteria2-qr.png" ]]; then
-        echo -e "${CYAN}QR saved to: $CONFIG_DIR/hysteria2-qr.png${NC}"
+        echo -e "${CYAN}QR code saved to: $CONFIG_DIR/hysteria2-qr.png${NC}"
     fi
     
     echo ""
-    log "Hysteria2 installation complete!"
+    log "Hysteria2 Installation完成!"
     echo ""
     read -rp "Press Enter to continue..."
 }
 
-# ==================== Shadowsocks Install (notneedDomain) ====================
+# ==================== Shadowsocks Installation (不需要域名) ====================
 
 install_shadowsocks() {
     clear
     echo ""
     echo -e "${CYAN}============================================================${NC}"
-    echo -e "${CYAN}                    Shadowsocks Install${NC}"
+    echo -e "${CYAN}                    Shadowsocks Installation${NC}"
     echo -e "${CYAN}============================================================${NC}"
     echo ""
     
@@ -1009,7 +1173,7 @@ EOF
     systemctl restart shadowsocks-libev
     
     cat > "$CONFIG_DIR/ss-info.txt" <<EOF
-========== Shadowsocks ConfigInfo ==========
+========== Shadowsocks Config ==========
 Server: $SERVER_IP
 Port: $PORT
 Password: $PASSWORD
@@ -1027,32 +1191,42 @@ EOF
     
     clear
     echo -e "${GREEN}========================================${NC}"
-    echo -e "${GREEN}      Shadowsocks installed!${NC}"
+    echo -e "${GREEN}      Shadowsocks Installation成功!${NC}"
     echo -e "${GREEN}========================================${NC}"
     echo ""
     cat "$CONFIG_DIR/ss-info.txt"
     echo ""
-    echo -e "${CYAN}Share link:${NC}"
+    echo -e "${CYAN}Share Link:${NC}"
     echo "$SS_LINK"
     echo ""
     
-    log "Shadowsocks installation complete!"
+    log "Shadowsocks Installation完成!"
     echo ""
     read -rp "Press Enter to continue..."
 }
 
-# ==================== VMess installed (needDomain) ====================
+# ==================== VMess 安装 (需要域名) ====================
 
 install_vmess() {
     clear
     echo ""
     echo -e "${CYAN}============================================================${NC}"
-    echo -e "${CYAN}                    VMess + WebSocket Install${NC}"
+    echo -e "${CYAN}                    VMess + WebSocket Installation${NC}"
     echo -e "${CYAN}============================================================${NC}"
     echo ""
     
     local DOMAIN=$(get_domain "VMess")
     if [[ $? -ne 0 ]]; then return; fi
+    
+    # 检查是否是IP direct mode
+    local IP_MODE=0
+    local SERVER_IP=""
+    if [[ "$DOMAIN" == "__IP_DIRECT__" ]]; then
+        IP_MODE=1
+        SERVER_IP=$(curl -s -4 https://api.ipify.org)
+        DOMAIN="$SERVER_IP"
+        log "IP direct mode, server IP: $SERVER_IP"
+    fi
     
     install_xray
     
@@ -1060,20 +1234,63 @@ install_vmess() {
     local UUID=$(xray uuid)
     local WS_PATH="/$(openssl rand -hex 8)"
     
-    log "Applying for SSL certificate..."
-    
-    if [[ ! -f ~/.acme.sh/acme.sh ]]; then
-        curl https://get.acme.sh | sh
+    if [[ $IP_MODE -eq 0 ]]; then
+        # Domain mode - applying cert
+        log "Applying for SSL certificate..."
+        
+        if [[ ! -f ~/.acme.sh/acme.sh ]]; then
+            curl https://get.acme.sh | sh
+        fi
+        
+        export PATH="$HOME/.acme.sh:$PATH"
+        ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt >/dev/null 2>&1 || true
+        ~/.acme.sh/acme.sh --issue -d "$DOMAIN" --standalone --force --server letsencrypt
+        ~/.acme.sh/acme.sh --install-cert -d "$DOMAIN" \
+            --key-file /usr/local/etc/xray/vmess-private.key \
+            --fullchain-file /usr/local/etc/xray/vmess-cert.crt
     fi
     
-    export PATH="$HOME/.acme.sh:$PATH"
-    ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt >/dev/null 2>&1 || true
-    ~/.acme.sh/acme.sh --issue -d "$DOMAIN" --standalone --force --server letsencrypt
-    ~/.acme.sh/acme.sh --install-cert -d "$DOMAIN" \
-        --key-file /usr/local/etc/xray/vmess-private.key \
-        --fullchain-file /usr/local/etc/xray/vmess-cert.crt
-    
-    cat > /usr/local/etc/xray/vmess.json <<EOF
+    if [[ $IP_MODE -eq 1 ]]; then
+        # IP direct mode - 无TLS
+        cat > /usr/local/etc/xray/vmess.json <<EOF
+{
+    "log": {
+        "access": "/var/log/xray/vmess-access.log",
+        "error": "/var/log/xray/vmess-error.log",
+        "loglevel": "warning"
+    },
+    "inbounds": [
+        {
+            "port": $PORT,
+            "protocol": "vmess",
+            "settings": {
+                "clients": [
+                    {
+                        "id": "$UUID",
+                        "alterId": 0
+                    }
+                ]
+            },
+            "streamSettings": {
+                "network": "ws",
+                "wsSettings": {
+                    "path": "$WS_PATH"
+                },
+                "security": "none"
+            }
+        }
+    ],
+    "outbounds": [
+        {
+            "protocol": "freedom",
+            "tag": "direct"
+        }
+    ]
+}
+EOF
+    else
+        # Domain mode
+        cat > /usr/local/etc/xray/vmess.json <<EOF
 {
     "log": {
         "access": "/var/log/xray/vmess-access.log",
@@ -1117,23 +1334,41 @@ install_vmess() {
     ]
 }
 EOF
+    fi
     
     cp /usr/local/etc/xray/vmess.json /usr/local/etc/xray/config.json
     systemctl restart xray
     
-    cat > "$CONFIG_DIR/vmess-info.txt" <<EOF
-========== VMess ConfigInfo ==========
+    if [[ $IP_MODE -eq 1 ]]; then
+        cat > "$CONFIG_DIR/vmess-info.txt" <<EOF
+========== VMess + WebSocket (IP Direct) ==========
+Server: $SERVER_IP
+Port: $PORT
+UUID: $UUID
+AlterID: 0
+Network: ws
+WebSocket Path: $WS_PATH
+TLS: Off (IP direct no TLS)
+====================================
+EOF
+        
+        local VMESS_JSON='{"v":"2","ps":"VMess-IP-'$(hostname)'","add":"'$SERVER_IP'","port":"'$PORT'","id":"'$UUID'","aid":"0","scy":"auto","net":"ws","type":"none","host":"'$SERVER_IP'","path":"'$WS_PATH'","tls":"","sni":""}'
+    else
+        cat > "$CONFIG_DIR/vmess-info.txt" <<EOF
+========== VMess + WebSocket ==========
 Server: $DOMAIN
 Port: $PORT
 UUID: $UUID
 AlterID: 0
 Network: ws
 WebSocket Path: $WS_PATH
-TLS: enabled
+TLS: On
 ====================================
 EOF
+        
+        local VMESS_JSON='{"v":"2","ps":"VMess-'$(hostname)'","add":"'$DOMAIN'","port":"'$PORT'","id":"'$UUID'","aid":"0","scy":"auto","net":"ws","type":"none","host":"'$DOMAIN'","path":"'$WS_PATH'","tls":"tls","sni":"'$DOMAIN'"}'
+    fi
     
-    local VMESS_JSON='{"v":"2","ps":"VMess-'$(hostname)'","add":"'$DOMAIN'","port":"'$PORT'","id":"'$UUID'","aid":"0","scy":"auto","net":"ws","type":"none","host":"'$DOMAIN'","path":"'$WS_PATH'","tls":"tls","sni":"'$DOMAIN'"}'
     local VMESS_LINK="vmess://$(echo -n "$VMESS_JSON" | base64 -w 0)"
     echo "$VMESS_LINK" > "$CONFIG_DIR/vmess-link.txt"
     
@@ -1149,7 +1384,7 @@ EOF
     echo ""
     cat "$CONFIG_DIR/vmess-info.txt"
     echo ""
-    echo -e "${CYAN}Share link:${NC}"
+    echo -e "${CYAN}Share Link:${NC}"
     echo "$VMESS_LINK"
     echo ""
     
@@ -1158,13 +1393,13 @@ EOF
     read -rp "Press Enter to continue..."
 }
 
-# ==================== Trojan installed (needDomain) ====================
+# ==================== Trojan 安装 (需要域名) ====================
 
 install_trojan() {
     clear
     echo ""
     echo -e "${CYAN}============================================================${NC}"
-    echo -e "${CYAN}                    Trojan + WebSocket Install${NC}"
+    echo -e "${CYAN}                    Trojan + WebSocket Installation${NC}"
     echo -e "${CYAN}============================================================${NC}"
     echo ""
     
@@ -1243,13 +1478,13 @@ EOF
     systemctl restart trojan-go
     
     cat > "$CONFIG_DIR/trojan-info.txt" <<EOF
-========== Trojan ConfigInfo ==========
+========== Trojan Config ==========
 Server: $DOMAIN
 Port: $PORT
 Password: $PASSWORD
 Network: websocket
 WebSocket Path: $WS_PATH
-TLS: enabled
+TLS: On
 SNI: $DOMAIN
 =====================================
 EOF
@@ -1269,7 +1504,7 @@ EOF
     echo ""
     cat "$CONFIG_DIR/trojan-info.txt"
     echo ""
-    echo -e "${CYAN}Share link:${NC}"
+    echo -e "${CYAN}Share Link:${NC}"
     echo "$TROJAN_LINK"
     echo ""
     
@@ -1278,13 +1513,13 @@ EOF
     read -rp "Press Enter to continue..."
 }
 
-# ==================== eck?Configuring ====================
+# ==================== 查看配置 ====================
 
 view_config() {
     clear
     echo ""
     echo -e "${CYAN}============================================================${NC}"
-    echo -e "${CYAN}                    View Configurations${NC}"
+    echo -e "${CYAN}                    View Installed Services${NC}"
     echo -e "${CYAN}============================================================${NC}"
     echo ""
     
@@ -1292,7 +1527,7 @@ view_config() {
         echo -e "${GREEN}[Vless Config]${NC}"
         cat "$CONFIG_DIR/vless-info.txt"
         echo ""
-        echo -e "${CYAN}Share link:${NC}"
+        echo -e "${CYAN}Share Link:${NC}"
         cat "$CONFIG_DIR/vless-link.txt"
         echo ""
         echo "----------------------------------------"
@@ -1302,7 +1537,7 @@ view_config() {
         echo -e "${GREEN}[Hysteria2 Config]${NC}"
         cat "$CONFIG_DIR/hysteria2-info.txt"
         echo ""
-        echo -e "${CYAN}Share link:${NC}"
+        echo -e "${CYAN}Share Link:${NC}"
         cat "$CONFIG_DIR/hysteria2-link.txt"
         echo ""
         echo "----------------------------------------"
@@ -1312,7 +1547,7 @@ view_config() {
         echo -e "${GREEN}[Shadowsocks Config]${NC}"
         cat "$CONFIG_DIR/ss-info.txt"
         echo ""
-        echo -e "${CYAN}Share link:${NC}"
+        echo -e "${CYAN}Share Link:${NC}"
         cat "$CONFIG_DIR/ss-link.txt"
         echo ""
         echo "----------------------------------------"
@@ -1322,7 +1557,7 @@ view_config() {
         echo -e "${GREEN}[VMess Config]${NC}"
         cat "$CONFIG_DIR/vmess-info.txt"
         echo ""
-        echo -e "${CYAN}Share link:${NC}"
+        echo -e "${CYAN}Share Link:${NC}"
         cat "$CONFIG_DIR/vmess-link.txt"
         echo ""
         echo "----------------------------------------"
@@ -1332,7 +1567,7 @@ view_config() {
         echo -e "${GREEN}[Trojan Config]${NC}"
         cat "$CONFIG_DIR/trojan-info.txt"
         echo ""
-        echo -e "${CYAN}Share link:${NC}"
+        echo -e "${CYAN}Share Link:${NC}"
         cat "$CONFIG_DIR/trojan-link.txt"
         echo ""
         echo "----------------------------------------"
@@ -1379,6 +1614,7 @@ generate_subscription() {
         return 1
     fi
     
+    # Remove trailing newline and base64 encode
     SUB_CONTENT=$(echo -e "$SUB_CONTENT" | sed '$d')
     echo -n "$SUB_CONTENT" | base64 -w 0
 }
@@ -1394,12 +1630,13 @@ show_subscription() {
     local SUB_B64=$(generate_subscription)
     
     if [[ -z "$SUB_B64" ]]; then
-        echo -e "${YELLOW}No proxy services installed yet. Cannot generate subscription link.${NC}"
+        echo -e "${YELLOW}No proxy services installed，无法生成Subscription Link${NC}"
         echo ""
         read -rp "Press Enter to continue..."
         return
     fi
     
+    # Save subscription file
     echo "$SUB_B64" | base64 -d | base64 -w 0 > "$CONFIG_DIR/subscription.txt"
     
     local SERVER_IP=$(curl -s -4 https://api.ipify.org)
@@ -1414,17 +1651,18 @@ show_subscription() {
     echo ""
     echo "  http://${SERVER_IP}:8080/sub"
     echo ""
-    echo -e "${YELLOW}Tip: Paste the Base64 content into clients that support subscription links${NC}"
-    echo -e "${YELLOW}Or configure Nginx/Caddy to serve $CONFIG_DIR/subscription.txt as a static file${NC}"
+    echo -e "${YELLOW}Tip: Paste Base64 into clients that support subscription${NC}"
+    echo -e "${YELLOW}Or configure Nginx/Caddy to serve $CONFIG_DIR/subscription.txt as static file${NC}"
     echo ""
     
+    # Try to start a simple HTTP server for subscription
     if command -v python3 &>/dev/null; then
         if ! ss -tlnp | grep -q ':8080'; then
-            echo -e "${GREEN}Starting temporary subscription service (port 8080)...${NC}"
+            echo -e "${GREEN}正在启动临时订阅服务 (Port 8080)...${NC}"
             mkdir -p /tmp/vps-sub
             echo "$SUB_B64" | base64 -d | base64 -w 0 > /tmp/vps-sub/sub
             nohup python3 -m http.server 8080 --directory /tmp/vps-sub >/dev/null 2>&1 &
-            echo -e "${GREEN}Subscription service started. Access via http://${SERVER_IP}:8080/sub${NC}"
+            echo -e "${GREEN}Subscription service started，Access via http://${SERVER_IP}:8080/sub ${NC}"
             echo ""
         fi
     fi
@@ -1447,9 +1685,9 @@ uninstall_service() {
     echo "  4. Uninstall VMess"
     echo "  5. Uninstall Trojan"
     echo "  6. Uninstall All"
-    echo "  7. Back??ple"
+    echo "  7. Back to main menu"
     echo ""
-    read -rp "requestselect [1-7]: " uninstall_choice
+    read -rp "Select [1-7]: " uninstall_choice
     
     case $uninstall_choice in
         1)
@@ -1494,7 +1732,7 @@ uninstall_service() {
             rm -rf /usr/local/etc/xray /etc/hysteria /etc/trojan
             rm -f /usr/local/bin/xray /usr/local/bin/hysteria /usr/local/bin/trojan-go
             rm -f "$CONFIG_DIR"/*-info.txt "$CONFIG_DIR"/*-link.txt "$CONFIG_DIR"/*-qr.png
-            log "All services uninstalled"
+            log "所有服务uninstalled"
             ;;
         7) return ;;
     esac
@@ -1503,12 +1741,12 @@ uninstall_service() {
     read -rp "Press Enter to continue..."
 }
 
-# ==================== ??ple ====================
+# ==================== 主菜单 ====================
 
 show_banner() {
     echo ""
     echo -e "${CYAN}============================================================${NC}"
-    echo -e "${GREEN}           VPS Toolbox - ?Features?????? v2.0.0${NC}"
+    echo -e "${GREEN}           VPS Toolbox - 多功能一键部署工具 v2.0.0${NC}"
     echo -e "${CYAN}============================================================${NC}"
     echo -e "  ${YELLOW}Author${NC}: Kitaro-Loked"
     echo -e "  ${YELLOW}Repo${NC}: https://github.com/Kitaro-Loked/VPS-Toolbox"
@@ -1520,19 +1758,20 @@ show_menu() {
     clear
     show_banner
     echo -e "  ${YELLOW}[DDNS & Network]${NC}"
-    echo "    1. DDNS Setup (Auto-renew)"
-    echo "    2. WARP Setup"
+    echo "    1. DDNS Domain Management (自动续签)"
+    echo "    2. WARP Configuration"
     echo ""
     echo -e "  ${YELLOW}[Proxy Protocols]${NC}"
-    echo "    3. Install Vless + Reality (needs domain)"
-    echo "    4. Install Hysteria2 (needs domain)"
-    echo "    5. Install Shadowsocks (no domain needed)"
-    echo "    6. Install VMess + WebSocket (needs domain)"
-    echo "    7. Install Trojan + WebSocket (needs domain)"
+    echo "    3. Install Vless + Reality (domain)"
+    echo "    4. Install Hysteria2 (domain)"
+    echo "    5. Install Shadowsocks (no domain)"
+    echo "    6. Install VMess + WS (domain)"
+    echo "    7. Install Trojan + WS (domain)"
     echo ""
     echo -e "  ${YELLOW}[Management]${NC}"
-    echo "    8. View All Configs"
-    echo "    9. Uninstall Service"
+    echo "    8. View All Config"
+    echo "    9. 生成Subscription Link"
+    echo "    10. Uninstall Service"
     echo "    0. Exit"
     echo ""
     echo -e "${CYAN}============================================================${NC}"
@@ -1546,7 +1785,7 @@ main() {
     
     while true; do
         show_menu
-        read -rp "Select operation [0-9]: " choice
+        read -rp "Select [0-10]: " choice
         
         case $choice in
             1) setup_ddns ;;
@@ -1560,11 +1799,11 @@ main() {
             9) show_subscription ;;
             10) uninstall_service ;;
             0)
-                echo -e "${GREEN}Thanks for using VPS Toolbox, goodbye!${NC}"
+                echo -e "${GREEN}Thanks for using VPS Toolbox!${NC}"
                 exit 0
                 ;;
             *)
-                warn "Invalid choice, please try again"
+                warn "Invalid selection，请重新输入"
                 sleep 1
                 ;;
         esac
