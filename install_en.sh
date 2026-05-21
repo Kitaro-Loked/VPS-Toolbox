@@ -2,7 +2,9 @@
 # ============================================================
 # VPS Toolbox - 一键部署脚本
 # 功能: DDNS/WARP/Vless/Hysteria2/SS/VMess/Trojan
-# Version: 1.0.0
+# Author: Kitaro-Loked
+# Repo: https://github.com/Kitaro-Loked/VPS-Toolbox
+# 版本: 2.0.0
 # ============================================================
 
 set -e
@@ -16,12 +18,13 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 # 全局变量
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_DIR="/etc/vps-toolbox"
 LOG_FILE="/var/log/vps-toolbox.log"
 DDNS_DOMAIN=""
-DDNS_TOKEN=""
+DDNS_PROVIDER=""
+DDNS_PASS=""
 
+# 日志函数
 log() {
     echo -e "${GREEN}[$(date '+%Y-%m-%d %H:%M:%S')] $1${NC}" | tee -a "$LOG_FILE"
 }
@@ -39,12 +42,14 @@ info() {
     echo -e "${BLUE}[INFO] $1${NC}"
 }
 
+# 检查root权限
 check_root() {
     if [[ $EUID -ne 0 ]]; then
         error "Please run as root"
     fi
 }
 
+# 检查系统类型
 check_system() {
     if [[ -f /etc/os-release ]]; then
         . /etc/os-release
@@ -72,6 +77,7 @@ check_system() {
     log "Detected OS: $OS $VER"
 }
 
+# 安装依赖
 install_dependencies() {
     log "Installing dependencies..."
     
@@ -90,41 +96,116 @@ install_dependencies() {
     log "Dependencies installed"
 }
 
-# ==================== DDNS ====================
+# ==================== DDNS 功能 ====================
 
 setup_ddns() {
     clear
-    echo -e "${CYAN}========================================${NC}"
-    echo -e "${CYAN}         DDNS Domain申请与管理${NC}"
-    echo -e "${CYAN}========================================${NC}"
+    echo ""
+    echo -e "${CYAN}============================================================${NC}"
+    echo -e "${CYAN}                   DDNS Setup${NC}"
+    echo -e "${CYAN}============================================================${NC}"
     echo ""
     echo -e "${YELLOW}Select DDNS provider:${NC}"
-    echo "  1. Cloudflare (Recommended)"
-    echo "  2. DuckDNS"
-    echo "  3. No-IP"
-    echo "  4. Back to menu"
     echo ""
-    read -rp "Select [1-4]: " ddns_choice
+    echo -e "  ${GREEN}1. scritch.org (推荐 - Easiest)${NC}"
+    echo "     No signup, one command gets a domain"
+    echo ""
+    echo "  2. Cloudflare"
+    echo "  3. DuckDNS"
+    echo "  4. No-IP"
+    echo "  5. 返回主菜单"
+    echo ""
+    read -rp "请选择 [1-5]: " ddns_choice
     
     case $ddns_choice in
-        1) setup_cloudflare_ddns ;;
-        2) setup_duckdns ;;
-        3) setup_noip ;;
-        4) return ;;
+        1) setup_scritch ;;
+        2) setup_cloudflare_ddns ;;
+        3) setup_duckdns ;;
+        4) setup_noip ;;
+        5) return ;;
         *) warn "Invalid choice"; sleep 2; setup_ddns ;;
     esac
 }
 
+# scritch.org - EasiestDDNS
+setup_scritch() {
+    echo ""
+    info "Applying for free domain via scritch.org..."
+    echo "----------------------------------------"
+    
+    local SCRITCH_OUTPUT=$(curl -sS https://scritch.org/new)
+    
+    if [[ -z "$SCRITCH_OUTPUT" ]]; then
+        error "Cannot connect to scritch.org"
+    fi
+    
+    # 解析输出
+    DDNS_DOMAIN=$(echo "$SCRITCH_OUTPUT" | grep "Domain:" | awk '{print $2}')
+    DDNS_PASS=$(echo "$SCRITCH_OUTPUT" | grep "Password:" | awk '{print $2}')
+    local UPDATE_URL=$(echo "$SCRITCH_OUTPUT" | grep "Update:" | sed 's/Update:   //')
+    
+    if [[ -z "$DDNS_DOMAIN" || -z "$DDNS_PASS" ]]; then
+        error "Failed to parse scritch.org response"
+    fi
+    
+    log "Domain application successful!"
+    log "Domain: $DDNS_DOMAIN"
+    log "Password: $DDNS_PASS"
+    
+    # 保存Configuring
+    cat > "$CONFIG_DIR/ddns.conf" <<EOF
+DDNS_PROVIDER=scritch
+DDNS_DOMAIN=$DDNS_DOMAIN
+DDNS_PASS=$DDNS_PASS
+UPDATE_URL=$UPDATE_URL
+EOF
+    
+    # 创建更新脚本
+    cat > "$CONFIG_DIR/update-ddns.sh" <<EOF
+#!/bin/bash
+CONFIG_DIR="/etc/vps-toolbox"
+source "\$CONFIG_DIR/ddns.conf"
+
+PUBLIC_IP=\$(curl -s -4 https://api.ipify.org)
+CURRENT_IP=\$(dig +short "\$DDNS_DOMAIN" | tail -n1)
+
+if [[ "\$PUBLIC_IP" != "\$CURRENT_IP" ]]; then
+    curl -s "https://scritch.org/update?domain=\$DDNS_DOMAIN&password=\$DDNS_PASS" >/dev/null
+    echo "[\$(date)] DDNS updated: \$DDNS_DOMAIN -> \$PUBLIC_IP" >> /var/log/ddns.log
+fi
+EOF
+    chmod +x "$CONFIG_DIR/update-ddns.sh"
+    
+    # 添加定时任务
+    (crontab -l 2>/dev/null | grep -v "update-ddns"; echo "*/5 * * * * $CONFIG_DIR/update-ddns.sh >/dev/null 2>&1") | crontab -
+    
+    echo ""
+    echo -e "${GREEN}========================================${NC}"
+    echo -e "${GREEN}      scritch.org DDNS configured!${NC}"
+    echo -e "${GREEN}========================================${NC}"
+    echo ""
+    echo -e "${CYAN}Domain:${NC} $DDNS_DOMAIN"
+    echo -e "${CYAN}Password:${NC} $DDNS_PASS"
+    echo -e "${CYAN}Update command:${NC}"
+    echo "$UPDATE_URL"
+    echo ""
+    log "Auto-update cron job added (每5分钟)"
+    
+    echo ""
+    read -rp "Press Enter to continue..."
+}
+
+# Cloudflare DDNS
 setup_cloudflare_ddns() {
     echo ""
-    info "Cloudflare DDNS Domain申请与管理"
+    info "Cloudflare DDNS Setup"
     echo "----------------------------------------"
     read -rp "Enter Cloudflare API Token: " cf_token
-    read -rp "Enter domain (e.g. example.com): " cf_domain
-    read -rp "Enter subdomain prefix (e.g. vps, leave empty for root): " cf_subdomain
+    read -rp "请输入Domain (例如: example.com): " cf_domain
+    read -rp "请输入子Domain前缀 (例如: vps，留空使用根Domain): " cf_subdomain
     
     if [[ -z "$cf_token" || -z "$cf_domain" ]]; then
-        error "API Token and domain cannot be empty"
+        error "API Token 和Domain不能为空"
     fi
     
     log "Getting Zone ID..."
@@ -133,7 +214,7 @@ setup_cloudflare_ddns() {
         -H "Content-Type: application/json" | jq -r '.result[0].id')
     
     if [[ "$ZONE_ID" == "null" || -z "$ZONE_ID" ]]; then
-        error "Cannot get Zone ID, check API Token and domain"
+        error "无法获取 Zone ID，请检查 API Token 和Domain"
     fi
     
     log "Zone ID: $ZONE_ID"
@@ -173,7 +254,7 @@ CF_TOKEN=$cf_token
 CF_DOMAIN=$cf_domain
 CF_SUBDOMAIN=$cf_subdomain
 ZONE_ID=$ZONE_ID
-FULL_DOMAIN=$FULL_DOMAIN
+DDNS_DOMAIN=$FULL_DOMAIN
 EOF
     
     cat > "$CONFIG_DIR/update-ddns.sh" <<'EOF'
@@ -182,19 +263,19 @@ CONFIG_DIR="/etc/vps-toolbox"
 source "$CONFIG_DIR/ddns.conf"
 
 PUBLIC_IP=$(curl -s -4 https://api.ipify.org || curl -s -4 https://ifconfig.me)
-CURRENT_IP=$(dig +short "$FULL_DOMAIN" | tail -n1)
+CURRENT_IP=$(dig +short "$DDNS_DOMAIN" | tail -n1)
 
 if [[ "$PUBLIC_IP" != "$CURRENT_IP" ]]; then
-    RECORD_ID=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records?name=$FULL_DOMAIN" \
+    RECORD_ID=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records?name=$DDNS_DOMAIN" \
         -H "Authorization: Bearer $CF_TOKEN" \
         -H "Content-Type: application/json" | jq -r '.result[0].id')
     
     curl -s -X PUT "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records/$RECORD_ID" \
         -H "Authorization: Bearer $CF_TOKEN" \
         -H "Content-Type: application/json" \
-        --data "{\"type\":\"A\",\"name\":\"$FULL_DOMAIN\",\"content\":\"$PUBLIC_IP\",\"ttl\":120,\"proxied\":false}" >/dev/null
+        --data "{\"type\":\"A\",\"name\":\"$DDNS_DOMAIN\",\"content\":\"$PUBLIC_IP\",\"ttl\":120,\"proxied\":false}" >/dev/null
     
-    echo "[$(date)] DDNS updated: $FULL_DOMAIN -> $PUBLIC_IP" >> /var/log/ddns.log
+    echo "[$(date)] DDNS updated: $DDNS_DOMAIN -> $PUBLIC_IP" >> /var/log/ddns.log
 fi
 EOF
     chmod +x "$CONFIG_DIR/update-ddns.sh"
@@ -206,24 +287,25 @@ EOF
     log "DDNS configured!"
     log "Domain: $FULL_DOMAIN"
     log "Current IP: $PUBLIC_IP"
-    log "Auto-update cron job added (every 5 min)"
+    log "Auto-update cron job added (每5分钟)"
     
     echo ""
     read -rp "Press Enter to continue..."
 }
 
+# DuckDNS
 setup_duckdns() {
     echo ""
     info "DuckDNS Setup"
     echo "----------------------------------------"
     read -rp "Enter DuckDNS Token: " duck_token
-    read -rp "请输入子Domain (e.g. myvps): " duck_domain
+    read -rp "请输入子Domain (例如: myvps): " duck_domain
     
     if [[ -z "$duck_token" || -z "$duck_domain" ]]; then
         error "Token 和Domain不能为空"
     fi
     
-    FULL_DOMAIN="${duck_domain}.duckdns.org"
+    DDNS_DOMAIN="${duck_domain}.duckdns.org"
     PUBLIC_IP=$(curl -s -4 https://api.ipify.org)
     
     curl -s "https://www.duckdns.org/update?domains=$duck_domain&token=$duck_token&ip=$PUBLIC_IP" >/dev/null
@@ -232,7 +314,7 @@ setup_duckdns() {
 DDNS_PROVIDER=duckdns
 DUCK_TOKEN=$duck_token
 DUCK_DOMAIN=$duck_domain
-FULL_DOMAIN=$FULL_DOMAIN
+DDNS_DOMAIN=$DDNS_DOMAIN
 EOF
     
     cat > "$CONFIG_DIR/update-ddns.sh" <<'EOF'
@@ -241,33 +323,32 @@ CONFIG_DIR="/etc/vps-toolbox"
 source "$CONFIG_DIR/ddns.conf"
 PUBLIC_IP=$(curl -s -4 https://api.ipify.org)
 curl -s "https://www.duckdns.org/update?domains=$DUCK_DOMAIN&token=$DUCK_TOKEN&ip=$PUBLIC_IP" >/dev/null
-echo "[$(date)] DDNS updated: $FULL_DOMAIN -> $PUBLIC_IP" >> /var/log/ddns.log
+echo "[$(date)] DDNS updated: $DDNS_DOMAIN -> $PUBLIC_IP" >> /var/log/ddns.log
 EOF
     chmod +x "$CONFIG_DIR/update-ddns.sh"
     
     (crontab -l 2>/dev/null | grep -v "update-ddns"; echo "*/5 * * * * $CONFIG_DIR/update-ddns.sh >/dev/null 2>&1") | crontab -
     
-    DDNS_DOMAIN="$FULL_DOMAIN"
-    
-    log "DuckDNS configured! Domain: $FULL_DOMAIN"
+    log "DuckDNS Setup完成! Domain: $DDNS_DOMAIN"
     echo ""
     read -rp "Press Enter to continue..."
 }
 
+# No-IP
 setup_noip() {
     echo ""
     info "No-IP Setup"
     echo "----------------------------------------"
     read -rp "Enter No-IP username: " noip_user
-    read -rsp "Enter No-IP password: " noip_pass
+    read -rsp "请输入 No-IP Password: " noip_pass
     echo ""
-    read -rp "Enter hostname (e.g. myvps.ddns.net): " noip_host
+    read -rp "Enter hostname (例如: myvps.ddns.net): " noip_host
     
     if [[ -z "$noip_user" || -z "$noip_pass" || -z "$noip_host" ]]; then
         error "All fields are required"
     fi
     
-    FULL_DOMAIN="$noip_host"
+    DDNS_DOMAIN="$noip_host"
     PUBLIC_IP=$(curl -s -4 https://api.ipify.org)
     
     curl -s -u "$noip_user:$noip_pass" "https://dynupdate.no-ip.com/nic/update?hostname=$noip_host&myip=$PUBLIC_IP" >/dev/null
@@ -277,7 +358,7 @@ DDNS_PROVIDER=noip
 NOIP_USER=$noip_user
 NOIP_PASS=$noip_pass
 NOIP_HOST=$noip_host
-FULL_DOMAIN=$FULL_DOMAIN
+DDNS_DOMAIN=$DDNS_DOMAIN
 EOF
     
     cat > "$CONFIG_DIR/update-ddns.sh" <<'EOF'
@@ -286,26 +367,87 @@ CONFIG_DIR="/etc/vps-toolbox"
 source "$CONFIG_DIR/ddns.conf"
 PUBLIC_IP=$(curl -s -4 https://api.ipify.org)
 curl -s -u "$NOIP_USER:$NOIP_PASS" "https://dynupdate.no-ip.com/nic/update?hostname=$NOIP_HOST&myip=$PUBLIC_IP" >/dev/null
-echo "[$(date)] DDNS updated: $FULL_DOMAIN -> $PUBLIC_IP" >> /var/log/ddns.log
+echo "[$(date)] DDNS updated: $DDNS_DOMAIN -> $PUBLIC_IP" >> /var/log/ddns.log
 EOF
     chmod +x "$CONFIG_DIR/update-ddns.sh"
     
     (crontab -l 2>/dev/null | grep -v "update-ddns"; echo "*/5 * * * * $CONFIG_DIR/update-ddns.sh >/dev/null 2>&1") | crontab -
     
-    DDNS_DOMAIN="$FULL_DOMAIN"
-    
-    log "No-IP configured! Domain: $FULL_DOMAIN"
+    log "No-IP Setup完成! Domain: $DDNS_DOMAIN"
     echo ""
     read -rp "Press Enter to continue..."
 }
 
-# ==================== WARP ====================
+# 获取或输入Domain
+get_domain() {
+    local PROTOCOL_NAME=$1
+    local NEED_DOMAIN=${2:-"yes"}
+    
+    # 如果协议不需要Domain，直接返回IP
+    if [[ "$NEED_DOMAIN" == "no" ]]; then
+        local SERVER_IP=$(curl -s -4 https://api.ipify.org)
+        echo "$SERVER_IP"
+        return 0
+    fi
+    
+    # 检查是否已有DDNSConfiguring
+    if [[ -f "$CONFIG_DIR/ddns.conf" ]]; then
+        source "$CONFIG_DIR/ddns.conf"
+        if [[ -n "$DDNS_DOMAIN" ]]; then
+            echo -e "${GREEN}检测到已ConfiguringDomain: $DDNS_DOMAIN${NC}"
+            read -rp "使用此Domain? [Y/n]: " use_existing
+            if [[ ! "$use_existing" =~ ^[Nn]$ ]]; then
+                echo "$DDNS_DOMAIN"
+                return 0
+            fi
+        fi
+    fi
+    
+    # 提供选择
+    echo ""
+    echo -e "${YELLOW}请选择Domain来源:${NC}"
+    echo "  1. Auto-apply via scritch.org (Easiest)"
+    echo "  2. 使用自己的Domain"
+    echo "  3. Go back"
+    echo ""
+    read -rp "请选择 [1-3]: " domain_choice
+    
+    case $domain_choice in
+        1)
+            setup_scritch
+            if [[ -n "$DDNS_DOMAIN" ]]; then
+                echo "$DDNS_DOMAIN"
+                return 0
+            else
+                error "Domain申请失败"
+            fi
+            ;;
+        2)
+            read -rp "请输入您的Domain: " custom_domain
+            if [[ -n "$custom_domain" ]]; then
+                echo "$custom_domain"
+                return 0
+            else
+                error "Domain不能为空"
+            fi
+            ;;
+        3)
+            return 1
+            ;;
+        *)
+            error "Invalid choice"
+            ;;
+    esac
+}
+
+# ==================== WARP 功能 ====================
 
 setup_warp() {
     clear
-    echo -e "${CYAN}========================================${NC}"
-    echo -e "${CYAN}         WARP Setup${NC}"
-    echo -e "${CYAN}========================================${NC}"
+    echo ""
+    echo -e "${CYAN}============================================================${NC}"
+    echo -e "${CYAN}                      WARP Setup${NC}"
+    echo -e "${CYAN}============================================================${NC}"
     echo ""
     
     if command -v warp-cli &>/dev/null; then
@@ -315,13 +457,13 @@ setup_warp() {
         echo "  2. Stop WARP"
         echo "  3. Check status"
         echo "  4. Uninstall WARP"
-        echo "  5. Back to menu"
+        echo "  5. 返回主菜单"
         echo ""
-        read -rp "Select [1-5]: " warp_choice
+        read -rp "请选择 [1-5]: " warp_choice
         
         case $warp_choice in
-            1) warp-cli connect; log "WARP started" ;;
-            2) warp-cli disconnect; log "WARP stopped" ;;
+            1) warp-cli connect; log "WARP 已Starting" ;;
+            2) warp-cli disconnect; log "WARP 已停止" ;;
             3) warp-cli status ;;
             4) uninstall_warp ;;
             5) return ;;
@@ -330,11 +472,11 @@ setup_warp() {
     fi
     
     echo -e "${YELLOW}Select installation method:${NC}"
-    echo "  1. Official Cloudflare WARP (Recommended)"
+    echo "  1. Official Cloudflare WARP (推荐)"
     echo "  2. WireGuard mode (wgcf)"
-    echo "  3. Back to menu"
+    echo "  3. 返回主菜单"
     echo ""
-    read -rp "Select [1-3]: " warp_install_choice
+    read -rp "请选择 [1-3]: " warp_install_choice
     
     case $warp_install_choice in
         1) install_warp_official ;;
@@ -411,11 +553,11 @@ uninstall_warp() {
     read -rp "Press Enter to continue..."
 }
 
-# ==================== Xray Core ====================
+# ==================== Xray Core安装 ====================
 
 install_xray() {
     if command -v xray &>/dev/null; then
-        log "Xray already installed, version: $(xray version | head -n1)"
+        log "Xray already installed: $(xray version | head -n1)"
         return 0
     fi
     
@@ -427,31 +569,18 @@ install_xray() {
     log "Xray installed"
 }
 
-# ==================== Vless ====================
+# ==================== Vless 安装 (需要Domain) ====================
 
 install_vless() {
     clear
-    echo -e "${CYAN}========================================${NC}"
-    echo -e "${CYAN}         Vless Install${NC}"
-    echo -e "${CYAN}========================================${NC}"
+    echo ""
+    echo -e "${CYAN}============================================================${NC}"
+    echo -e "${CYAN}                    Vless + Reality Install${NC}"
+    echo -e "${CYAN}============================================================${NC}"
     echo ""
     
-    if [[ -f "$CONFIG_DIR/ddns.conf" ]]; then
-        source "$CONFIG_DIR/ddns.conf"
-        echo -e "${GREEN}检测到已Configuring的DDNSDomain: $FULL_DOMAIN${NC}"
-        read -rp "是否使用此Domain? [Y/n]: " use_existing
-        if [[ ! "$use_existing" =~ ^[Nn]$ ]]; then
-            DDNS_DOMAIN="$FULL_DOMAIN"
-        else
-            read -rp "请输入您的Domain: " DDNS_DOMAIN
-        fi
-    else
-        read -rp "请输入您的Domain (or setup DDNS first): " DDNS_DOMAIN
-    fi
-    
-    if [[ -z "$DDNS_DOMAIN" ]]; then
-        error "Domain cannot be empty"
-    fi
+    local DOMAIN=$(get_domain "Vless")
+    if [[ $? -ne 0 ]]; then return; fi
     
     install_xray
     
@@ -469,8 +598,8 @@ install_vless() {
     
     export PATH="$HOME/.acme.sh:$PATH"
     
-    ~/.acme.sh/acme.sh --issue -d "$DDNS_DOMAIN" --standalone --force
-    ~/.acme.sh/acme.sh --install-cert -d "$DDNS_DOMAIN" \
+    ~/.acme.sh/acme.sh --issue -d "$DOMAIN" --standalone --force
+    ~/.acme.sh/acme.sh --install-cert -d "$DOMAIN" \
         --key-file /usr/local/etc/xray/private.key \
         --fullchain-file /usr/local/etc/xray/cert.crt
     
@@ -513,7 +642,7 @@ install_vless() {
                 }
             },
             "sniffing": {
-                "开启": true,
+                "enabled": true,
                 "destOverride": ["http", "tls", "quic"]
             }
         }
@@ -545,9 +674,9 @@ EOF
     systemctl restart xray
     
     cat > "$CONFIG_DIR/vless-info.txt" <<EOF
-========== Vless Configuring ==========
+========== Vless Configuring信息 ==========
 协议: Vless + Reality
-服务器地址: $DDNS_DOMAIN
+服务器地址: $DOMAIN
 端口: $PORT
 UUID: $UUID
 流控: xtls-rprx-vision
@@ -559,7 +688,7 @@ SNI: www.cloudflare.com
 ====================================
 EOF
     
-    local VLESS_LINK="vless://${UUID}@${DDNS_DOMAIN}:${PORT}?security=reality&sni=www.cloudflare.com&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp&flow=xtls-rprx-vision#Vless-Reality-$(hostname)"
+    local VLESS_LINK="vless://${UUID}@${DOMAIN}:${PORT}?security=reality&sni=www.cloudflare.com&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp&flow=xtls-rprx-vision#Vless-Reality-$(hostname)"
     
     echo "$VLESS_LINK" > "$CONFIG_DIR/vless-link.txt"
     
@@ -591,31 +720,18 @@ EOF
     read -rp "Press Enter to continue..."
 }
 
-# ==================== Hysteria2 ====================
+# ==================== Hysteria2 Install (需要Domain) ====================
 
 install_hysteria2() {
     clear
-    echo -e "${CYAN}========================================${NC}"
-    echo -e "${CYAN}         Hysteria2 Install${NC}"
-    echo -e "${CYAN}========================================${NC}"
+    echo ""
+    echo -e "${CYAN}============================================================${NC}"
+    echo -e "${CYAN}                      Hysteria2 Install${NC}"
+    echo -e "${CYAN}============================================================${NC}"
     echo ""
     
-    if [[ -f "$CONFIG_DIR/ddns.conf" ]]; then
-        source "$CONFIG_DIR/ddns.conf"
-        echo -e "${GREEN}检测到已Configuring的DDNSDomain: $FULL_DOMAIN${NC}"
-        read -rp "是否使用此Domain? [Y/n]: " use_existing
-        if [[ ! "$use_existing" =~ ^[Nn]$ ]]; then
-            DDNS_DOMAIN="$FULL_DOMAIN"
-        else
-            read -rp "请输入您的Domain: " DDNS_DOMAIN
-        fi
-    else
-        read -rp "请输入您的Domain: " DDNS_DOMAIN
-    fi
-    
-    if [[ -z "$DDNS_DOMAIN" ]]; then
-        error "Domain cannot be empty"
-    fi
+    local DOMAIN=$(get_domain "Hysteria2")
+    if [[ $? -ne 0 ]]; then return; fi
     
     log "Installing Hysteria2..."
     
@@ -627,8 +743,8 @@ install_hysteria2() {
     mkdir -p /etc/hysteria
     openssl ecparam -genkey -name prime256v1 -out /etc/hysteria/server.key
     openssl req -new -x509 -days 3650 -key /etc/hysteria/server.key \
-        -out /etc/hysteria/server.crt -subj "/CN=$DDNS_DOMAIN" \
-        -addext "subjectAltName=DNS:$DDNS_DOMAIN"
+        -out /etc/hysteria/server.crt -subj "/CN=$DOMAIN" \
+        -addext "subjectAltName=DNS:$DOMAIN"
     
     cat > /etc/hysteria/config.yaml <<EOF
 listen: :$PORT
@@ -660,17 +776,17 @@ EOF
     systemctl restart hysteria-server
     
     cat > "$CONFIG_DIR/hysteria2-info.txt" <<EOF
-========== Hysteria2 Configuring ==========
-服务器地址: $DDNS_DOMAIN
+========== Hysteria2 Configuring信息 ==========
+服务器地址: $DOMAIN
 端口: $PORT
-密码: $PASSWORD
-协议: udp
+Password: $PASSWORD
+传输协议: udp
 TLS: 自签名证书
-SNI: $DDNS_DOMAIN
+SNI: $DOMAIN
 =======================================
 EOF
     
-    local HY2_LINK="hysteria2://${PASSWORD}@${DDNS_DOMAIN}:${PORT}?sni=${DDNS_DOMAIN}&insecure=1#Hysteria2-$(hostname)"
+    local HY2_LINK="hysteria2://${PASSWORD}@${DOMAIN}:${PORT}?sni=${DOMAIN}&insecure=1#Hysteria2-$(hostname)"
     echo "$HY2_LINK" > "$CONFIG_DIR/hysteria2-link.txt"
     
     if command -v qrencode &>/dev/null; then
@@ -680,7 +796,7 @@ EOF
     
     clear
     echo -e "${GREEN}========================================${NC}"
-    echo -e "${GREEN}      Hysteria2 installed!${NC}"
+    echo -e "${GREEN}      Hysteria2 Install成功!${NC}"
     echo -e "${GREEN}========================================${NC}"
     echo ""
     cat "$CONFIG_DIR/hysteria2-info.txt"
@@ -694,21 +810,22 @@ EOF
     fi
     
     echo ""
-    log "Hysteria2 installation complete!"
+    log "Hysteria2 Install完成!"
     echo ""
     read -rp "Press Enter to continue..."
 }
 
-# ==================== Shadowsocks ====================
+# ==================== Shadowsocks Install (不需要Domain) ====================
 
 install_shadowsocks() {
     clear
-    echo -e "${CYAN}========================================${NC}"
-    echo -e "${CYAN}       Shadowsocks Install${NC}"
-    echo -e "${CYAN}========================================${NC}"
+    echo ""
+    echo -e "${CYAN}============================================================${NC}"
+    echo -e "${CYAN}                    Shadowsocks Install${NC}"
+    echo -e "${CYAN}============================================================${NC}"
     echo ""
     
-    log "正在Install Shadowsocks..."
+    log "Installing Shadowsocks..."
     
     if [[ "$PKG_MANAGER" == "apt" ]]; then
         apt-get install -y shadowsocks-libev
@@ -719,6 +836,7 @@ install_shadowsocks() {
     local PORT=$(shuf -i 10000-65000 -n 1)
     local PASSWORD=$(openssl rand -base64 16)
     local METHOD="aes-256-gcm"
+    local SERVER_IP=$(curl -s -4 https://api.ipify.org)
     
     cat > /etc/shadowsocks-libev/config.json <<EOF
 {
@@ -737,15 +855,15 @@ EOF
     systemctl restart shadowsocks-libev
     
     cat > "$CONFIG_DIR/ss-info.txt" <<EOF
-========== Shadowsocks Configuring ==========
-服务器地址: $(curl -s -4 https://api.ipify.org)
+========== Shadowsocks Configuring信息 ==========
+服务器地址: $SERVER_IP
 端口: $PORT
-密码: $PASSWORD
+Password: $PASSWORD
 加密方式: $METHOD
 =========================================
 EOF
     
-    local SS_LINK="ss://$(echo -n "$METHOD:$PASSWORD" | base64 -w 0)@$(curl -s -4 https://api.ipify.org):$PORT#SS-$(hostname)"
+    local SS_LINK="ss://$(echo -n "$METHOD:$PASSWORD" | base64 -w 0)@${SERVER_IP}:$PORT#SS-$(hostname)"
     echo "$SS_LINK" > "$CONFIG_DIR/ss-link.txt"
     
     if command -v qrencode &>/dev/null; then
@@ -755,7 +873,7 @@ EOF
     
     clear
     echo -e "${GREEN}========================================${NC}"
-    echo -e "${GREEN}      Shadowsocks installed!${NC}"
+    echo -e "${GREEN}      Shadowsocks Install成功!${NC}"
     echo -e "${GREEN}========================================${NC}"
     echo ""
     cat "$CONFIG_DIR/ss-info.txt"
@@ -764,36 +882,23 @@ EOF
     echo "$SS_LINK"
     echo ""
     
-    log "Shadowsocks installation complete!"
+    log "Shadowsocks Install完成!"
     echo ""
     read -rp "Press Enter to continue..."
 }
 
-# ==================== VMess ====================
+# ==================== VMess 安装 (需要Domain) ====================
 
 install_vmess() {
     clear
-    echo -e "${CYAN}========================================${NC}"
-    echo -e "${CYAN}         VMess Install${NC}"
-    echo -e "${CYAN}========================================${NC}"
+    echo ""
+    echo -e "${CYAN}============================================================${NC}"
+    echo -e "${CYAN}                    VMess + WebSocket Install${NC}"
+    echo -e "${CYAN}============================================================${NC}"
     echo ""
     
-    if [[ -f "$CONFIG_DIR/ddns.conf" ]]; then
-        source "$CONFIG_DIR/ddns.conf"
-        echo -e "${GREEN}检测到已Configuring的DDNSDomain: $FULL_DOMAIN${NC}"
-        read -rp "是否使用此Domain? [Y/n]: " use_existing
-        if [[ ! "$use_existing" =~ ^[Nn]$ ]]; then
-            DDNS_DOMAIN="$FULL_DOMAIN"
-        else
-            read -rp "请输入您的Domain: " DDNS_DOMAIN
-        fi
-    else
-        read -rp "请输入您的Domain (or setup DDNS first): " DDNS_DOMAIN
-    fi
-    
-    if [[ -z "$DDNS_DOMAIN" ]]; then
-        error "Domain cannot be empty"
-    fi
+    local DOMAIN=$(get_domain "VMess")
+    if [[ $? -ne 0 ]]; then return; fi
     
     install_xray
     
@@ -808,8 +913,8 @@ install_vmess() {
     fi
     
     export PATH="$HOME/.acme.sh:$PATH"
-    ~/.acme.sh/acme.sh --issue -d "$DDNS_DOMAIN" --standalone --force
-    ~/.acme.sh/acme.sh --install-cert -d "$DDNS_DOMAIN" \
+    ~/.acme.sh/acme.sh --issue -d "$DOMAIN" --standalone --force
+    ~/.acme.sh/acme.sh --install-cert -d "$DOMAIN" \
         --key-file /usr/local/etc/xray/vmess-private.key \
         --fullchain-file /usr/local/etc/xray/vmess-cert.crt
     
@@ -862,8 +967,8 @@ EOF
     systemctl restart xray
     
     cat > "$CONFIG_DIR/vmess-info.txt" <<EOF
-========== VMess Configuring ==========
-服务器地址: $DDNS_DOMAIN
+========== VMess Configuring信息 ==========
+服务器地址: $DOMAIN
 端口: $PORT
 UUID: $UUID
 额外ID: 0
@@ -873,7 +978,7 @@ TLS: 开启
 ====================================
 EOF
     
-    local VMESS_JSON='{"v":"2","ps":"VMess-'$(hostname)'","add":"'$DDNS_DOMAIN'","port":"'$PORT'","id":"'$UUID'","aid":"0","scy":"auto","net":"ws","type":"none","host":"'$DDNS_DOMAIN'","path":"'$WS_PATH'","tls":"tls","sni":"'$DDNS_DOMAIN'"}'
+    local VMESS_JSON='{"v":"2","ps":"VMess-'$(hostname)'","add":"'$DOMAIN'","port":"'$PORT'","id":"'$UUID'","aid":"0","scy":"auto","net":"ws","type":"none","host":"'$DOMAIN'","path":"'$WS_PATH'","tls":"tls","sni":"'$DOMAIN'"}'
     local VMESS_LINK="vmess://$(echo -n "$VMESS_JSON" | base64 -w 0)"
     echo "$VMESS_LINK" > "$CONFIG_DIR/vmess-link.txt"
     
@@ -898,31 +1003,18 @@ EOF
     read -rp "Press Enter to continue..."
 }
 
-# ==================== Trojan ====================
+# ==================== Trojan 安装 (需要Domain) ====================
 
 install_trojan() {
     clear
-    echo -e "${CYAN}========================================${NC}"
-    echo -e "${CYAN}         Trojan Install${NC}"
-    echo -e "${CYAN}========================================${NC}"
+    echo ""
+    echo -e "${CYAN}============================================================${NC}"
+    echo -e "${CYAN}                    Trojan + WebSocket Install${NC}"
+    echo -e "${CYAN}============================================================${NC}"
     echo ""
     
-    if [[ -f "$CONFIG_DIR/ddns.conf" ]]; then
-        source "$CONFIG_DIR/ddns.conf"
-        echo -e "${GREEN}检测到已Configuring的DDNSDomain: $FULL_DOMAIN${NC}"
-        read -rp "是否使用此Domain? [Y/n]: " use_existing
-        if [[ ! "$use_existing" =~ ^[Nn]$ ]]; then
-            DDNS_DOMAIN="$FULL_DOMAIN"
-        else
-            read -rp "请输入您的Domain: " DDNS_DOMAIN
-        fi
-    else
-        read -rp "请输入您的Domain (or setup DDNS first): " DDNS_DOMAIN
-    fi
-    
-    if [[ -z "$DDNS_DOMAIN" ]]; then
-        error "Domain cannot be empty"
-    fi
+    local DOMAIN=$(get_domain "Trojan")
+    if [[ $? -ne 0 ]]; then return; fi
     
     log "Installing Trojan..."
     
@@ -946,8 +1038,8 @@ install_trojan() {
     fi
     
     export PATH="$HOME/.acme.sh:$PATH"
-    ~/.acme.sh/acme.sh --issue -d "$DDNS_DOMAIN" --standalone --force
-    ~/.acme.sh/acme.sh --install-cert -d "$DDNS_DOMAIN" \
+    ~/.acme.sh/acme.sh --issue -d "$DOMAIN" --standalone --force
+    ~/.acme.sh/acme.sh --install-cert -d "$DOMAIN" \
         --key-file /etc/trojan/private.key \
         --fullchain-file /etc/trojan/cert.crt
     
@@ -966,19 +1058,19 @@ install_trojan() {
     "ssl": {
         "cert": "/etc/trojan/cert.crt",
         "key": "/etc/trojan/private.key",
-        "sni": "$DDNS_DOMAIN"
+        "sni": "$DOMAIN"
     },
     "websocket": {
-        "开启": true,
+        "enabled": true,
         "path": "$WS_PATH",
-        "hostname": "$DDNS_DOMAIN"
+        "hostname": "$DOMAIN"
     }
 }
 EOF
     
     cat > /etc/systemd/system/trojan-go.service <<EOF
 [Unit]
-Description=Trojan-Go 服务器地址
+Description=Trojan-Go Server
 After=network.target
 
 [Service]
@@ -995,18 +1087,18 @@ EOF
     systemctl restart trojan-go
     
     cat > "$CONFIG_DIR/trojan-info.txt" <<EOF
-========== Trojan Configuring ==========
-服务器地址: $DDNS_DOMAIN
+========== Trojan Configuring信息 ==========
+服务器地址: $DOMAIN
 端口: $PORT
-密码: $PASSWORD
-协议: websocket
+Password: $PASSWORD
+传输协议: websocket
 WebSocket路径: $WS_PATH
 TLS: 开启
-SNI: $DDNS_DOMAIN
+SNI: $DOMAIN
 =====================================
 EOF
     
-    local TROJAN_LINK="trojan://${PASSWORD}@${DDNS_DOMAIN}:${PORT}?security=tls&sni=${DDNS_DOMAIN}&type=ws&host=${DDNS_DOMAIN}&path=${WS_PATH}#Trojan-$(hostname)"
+    local TROJAN_LINK="trojan://${PASSWORD}@${DOMAIN}:${PORT}?security=tls&sni=${DOMAIN}&type=ws&host=${DOMAIN}&path=${WS_PATH}#Trojan-$(hostname)"
     echo "$TROJAN_LINK" > "$CONFIG_DIR/trojan-link.txt"
     
     if command -v qrencode &>/dev/null; then
@@ -1030,13 +1122,14 @@ EOF
     read -rp "Press Enter to continue..."
 }
 
-# ==================== View Config ====================
+# ==================== 查看Configuring ====================
 
 view_config() {
     clear
-    echo -e "${CYAN}========================================${NC}"
-    echo -e "${CYAN}         查看已安装服务Configuring${NC}"
-    echo -e "${CYAN}========================================${NC}"
+    echo ""
+    echo -e "${CYAN}============================================================${NC}"
+    echo -e "${CYAN}                    查看已安装服务Configuring${NC}"
+    echo -e "${CYAN}============================================================${NC}"
     echo ""
     
     if [[ -f "$CONFIG_DIR/vless-info.txt" ]]; then
@@ -1099,13 +1192,14 @@ view_config() {
     read -rp "Press Enter to continue..."
 }
 
-# ==================== Uninstall ====================
+# ==================== Uninstall Service ====================
 
 uninstall_service() {
     clear
-    echo -e "${CYAN}========================================${NC}"
-    echo -e "${CYAN}         Uninstall Service${NC}"
-    echo -e "${CYAN}========================================${NC}"
+    echo ""
+    echo -e "${CYAN}============================================================${NC}"
+    echo -e "${CYAN}                        Uninstall Service${NC}"
+    echo -e "${CYAN}============================================================${NC}"
     echo ""
     echo "  1. Uninstall Vless"
     echo "  2. Uninstall Hysteria2"
@@ -1113,9 +1207,9 @@ uninstall_service() {
     echo "  4. Uninstall VMess"
     echo "  5. Uninstall Trojan"
     echo "  6. Uninstall All"
-    echo "  7. Back to menu"
+    echo "  7. 返回主菜单"
     echo ""
-    read -rp "Select [1-7]: " uninstall_choice
+    read -rp "请选择 [1-7]: " uninstall_choice
     
     case $uninstall_choice in
         1)
@@ -1169,12 +1263,12 @@ uninstall_service() {
     read -rp "Press Enter to continue..."
 }
 
-# ==================== Main Menu ====================
+# ==================== 主菜单 ====================
 
 show_banner() {
     echo ""
     echo -e "${CYAN}============================================================${NC}"
-    echo -e "${GREEN}           VPS Toolbox - All-in-One Deploy Tool v1.0.0${NC}"
+    echo -e "${GREEN}           VPS Toolbox - All-in-One Deploy Tool v2.0.0${NC}"
     echo -e "${CYAN}============================================================${NC}"
     echo -e "  ${YELLOW}Author${NC}: Kitaro-Loked"
     echo -e "  ${YELLOW}Repo${NC}: https://github.com/Kitaro-Loked/VPS-Toolbox"
@@ -1186,18 +1280,18 @@ show_menu() {
     clear
     show_banner
     echo -e "  ${YELLOW}[DDNS & Network]${NC}"
-    echo "    1. DDNS Setup (Auto-renew)"
+    echo "    1. DDNS Setup (自动续签)"
     echo "    2. WARP Setup"
     echo ""
     echo -e "  ${YELLOW}[Proxy Protocols]${NC}"
-    echo "    3. Install Vless + Reality (Recommended)"
-    echo "    4. Install Hysteria2 (Recommended)"
-    echo "    5. Install Shadowsocks"
-    echo "    6. Install VMess + WebSocket"
-    echo "    7. Install Trojan + WebSocket"
+    echo "    3. Install Vless + Reality (需要Domain)"
+    echo "    4. Install Hysteria2 (需要Domain)"
+    echo "    5. Install Shadowsocks (无需Domain)"
+    echo "    6. Install VMess + WebSocket (需要Domain)"
+    echo "    7. Install Trojan + WebSocket (需要Domain)"
     echo ""
     echo -e "  ${YELLOW}[Management]${NC}"
-    echo "    8. View All Configs"
+    echo "    8. 查看所有Configuring"
     echo "    9. Uninstall Service"
     echo "    0. Exit"
     echo ""
