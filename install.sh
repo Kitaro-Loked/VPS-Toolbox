@@ -1,38 +1,37 @@
 #!/bin/bash
 # ============================================================
-# VPS Toolbox - 涓€閿儴缃茶剼鏈?# 鍔熻兘: DDNS鍩熷悕鐢宠/Warp閰嶇疆/Vless/Hysteria2/SS/VMess/Trojan
-# 浣滆€? VPS-Toolbox
-# 鐗堟湰: 1.0.0
+# VPS Toolbox - One-click deploy script
+# Features: DDNS/WARP/Vless/Hysteria2/SS/VMess/Trojan
+# Version: 1.0.0
 # ============================================================
 
 set -e
 
-# 棰滆壊瀹氫箟
+# Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-# 鍏ㄥ眬鍙橀噺
+# Global vars
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_DIR="/etc/vps-toolbox"
 LOG_FILE="/var/log/vps-toolbox.log"
 DDNS_DOMAIN=""
 DDNS_TOKEN=""
 
-# 鏃ュ織鍑芥暟
 log() {
     echo -e "${GREEN}[$(date '+%Y-%m-%d %H:%M:%S')] $1${NC}" | tee -a "$LOG_FILE"
 }
 
 warn() {
-    echo -e "${YELLOW}[$(date '+%Y-%m-%d %H:%M:%S')] 璀﹀憡: $1${NC}" | tee -a "$LOG_FILE"
+    echo -e "${YELLOW}[$(date '+%Y-%m-%d %H:%M:%S')] WARNING: $1${NC}" | tee -a "$LOG_FILE"
 }
 
 error() {
-    echo -e "${RED}[$(date '+%Y-%m-%d %H:%M:%S')] 閿欒: $1${NC}" | tee -a "$LOG_FILE"
+    echo -e "${RED}[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: $1${NC}" | tee -a "$LOG_FILE"
     exit 1
 }
 
@@ -40,20 +39,19 @@ info() {
     echo -e "${BLUE}[INFO] $1${NC}"
 }
 
-# 妫€鏌oot鏉冮檺
 check_root() {
     if [[ $EUID -ne 0 ]]; then
-        error "璇蜂娇鐢?root 鐢ㄦ埛杩愯姝よ剼鏈?
+        error "Please run as root"
     fi
 }
 
-# 妫€鏌ョ郴缁熺被鍨?check_system() {
+check_system() {
     if [[ -f /etc/os-release ]]; then
         . /etc/os-release
         OS=$NAME
         VER=$VERSION_ID
     else
-        error "鏃犳硶妫€娴嬫搷浣滅郴缁熺被鍨?
+        error "Cannot detect OS"
     fi
     
     case $OS in
@@ -67,16 +65,15 @@ check_root() {
             PKG_MANAGER="dnf"
             ;;
         *)
-            error "涓嶆敮鎸佺殑鎿嶄綔绯荤粺: $OS"
+            error "Unsupported OS: $OS"
             ;;
     esac
     
-    log "妫€娴嬪埌绯荤粺: $OS $VER"
+    log "Detected OS: $OS $VER"
 }
 
-# 瀹夎渚濊禆
 install_dependencies() {
-    log "姝ｅ湪瀹夎鍩虹渚濊禆..."
+    log "Installing dependencies..."
     
     if [[ "$PKG_MANAGER" == "apt" ]]; then
         apt-get update -y >/dev/null 2>&1
@@ -85,100 +82,91 @@ install_dependencies() {
         $PKG_MANAGER install -y curl wget git socat jq cronie openssl qrencode net-tools unzip >/dev/null 2>&1
     fi
     
-    # 鍚姩cron鏈嶅姟
     systemctl enable cron >/dev/null 2>&1 || systemctl enable crond >/dev/null 2>&1
     systemctl start cron >/dev/null 2>&1 || systemctl start crond >/dev/null 2>&1
     
-    # 鍒涘缓閰嶇疆鐩綍
     mkdir -p "$CONFIG_DIR"
     
-    log "鍩虹渚濊禆瀹夎瀹屾垚"
+    log "Dependencies installed"
 }
 
-# ==================== DDNS 鍔熻兘 ====================
+# ==================== DDNS ====================
 
-# 鐢宠DDNS鍩熷悕
 setup_ddns() {
     clear
     echo -e "${CYAN}========================================${NC}"
-    echo -e "${CYAN}         DDNS 鍩熷悕鐢宠涓庣鐞?{NC}"
+    echo -e "${CYAN}         DDNS Setup${NC}"
     echo -e "${CYAN}========================================${NC}"
     echo ""
-    echo -e "${YELLOW}璇烽€夋嫨 DDNS 鏈嶅姟鍟?${NC}"
-    echo "  1. Cloudflare (鎺ㄨ崘)"
+    echo -e "${YELLOW}Select DDNS provider:${NC}"
+    echo "  1. Cloudflare (Recommended)"
     echo "  2. DuckDNS"
     echo "  3. No-IP"
-    echo "  4. 杩斿洖涓昏彍鍗?
+    echo "  4. Back to menu"
     echo ""
-    read -rp "璇烽€夋嫨 [1-4]: " ddns_choice
+    read -rp "Select [1-4]: " ddns_choice
     
     case $ddns_choice in
         1) setup_cloudflare_ddns ;;
         2) setup_duckdns ;;
         3) setup_noip ;;
         4) return ;;
-        *) warn "鏃犳晥閫夋嫨"; sleep 2; setup_ddns ;;
+        *) warn "Invalid choice"; sleep 2; setup_ddns ;;
     esac
 }
 
-# Cloudflare DDNS
 setup_cloudflare_ddns() {
     echo ""
-    info "Cloudflare DDNS 閰嶇疆"
+    info "Cloudflare DDNS Setup"
     echo "----------------------------------------"
-    read -rp "璇疯緭鍏?Cloudflare API Token: " cf_token
-    read -rp "璇疯緭鍏ュ煙鍚?(渚嬪: example.com): " cf_domain
-    read -rp "璇疯緭鍏ュ瓙鍩熷悕鍓嶇紑 (渚嬪: vps锛岀暀绌轰娇鐢ㄦ牴鍩熷悕): " cf_subdomain
+    read -rp "Enter Cloudflare API Token: " cf_token
+    read -rp "Enter domain (e.g. example.com): " cf_domain
+    read -rp "Enter subdomain prefix (e.g. vps, leave empty for root): " cf_subdomain
     
     if [[ -z "$cf_token" || -z "$cf_domain" ]]; then
-        error "API Token 鍜屽煙鍚嶄笉鑳戒负绌?
+        error "API Token and domain cannot be empty"
     fi
     
-    # 鑾峰彇Zone ID
-    log "姝ｅ湪鑾峰彇 Zone ID..."
+    log "Getting Zone ID..."
     ZONE_ID=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones?name=$cf_domain" \
         -H "Authorization: Bearer $cf_token" \
         -H "Content-Type: application/json" | jq -r '.result[0].id')
     
     if [[ "$ZONE_ID" == "null" || -z "$ZONE_ID" ]]; then
-        error "鏃犳硶鑾峰彇 Zone ID锛岃妫€鏌?API Token 鍜屽煙鍚?
+        error "Cannot get Zone ID, check API Token and domain"
     fi
     
     log "Zone ID: $ZONE_ID"
     
-    # 鑾峰彇鍏綉IP
     PUBLIC_IP=$(curl -s -4 https://api.ipify.org || curl -s -4 https://ifconfig.me)
     if [[ -z "$PUBLIC_IP" ]]; then
-        error "鏃犳硶鑾峰彇鍏綉IP鍦板潃"
+        error "Cannot get public IP"
     fi
     
-    # 璁剧疆瀹屾暣鍩熷悕
     if [[ -n "$cf_subdomain" ]]; then
         FULL_DOMAIN="${cf_subdomain}.${cf_domain}"
     else
         FULL_DOMAIN="$cf_domain"
     fi
     
-    # 妫€鏌ヨ褰曟槸鍚﹀瓨鍦?    RECORD_ID=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records?name=$FULL_DOMAIN" \
+    RECORD_ID=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records?name=$FULL_DOMAIN" \
         -H "Authorization: Bearer $cf_token" \
         -H "Content-Type: application/json" | jq -r '.result[0].id')
     
     if [[ "$RECORD_ID" == "null" || -z "$RECORD_ID" ]]; then
-        # 鍒涘缓鏂拌褰?        log "鍒涘缓 DNS 璁板綍..."
+        log "Creating DNS record..."
         curl -s -X POST "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records" \
             -H "Authorization: Bearer $cf_token" \
             -H "Content-Type: application/json" \
             --data "{\"type\":\"A\",\"name\":\"$FULL_DOMAIN\",\"content\":\"$PUBLIC_IP\",\"ttl\":120,\"proxied\":false}" >/dev/null
     else
-        # 鏇存柊璁板綍
-        log "鏇存柊 DNS 璁板綍..."
+        log "Updating DNS record..."
         curl -s -X PUT "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records/$RECORD_ID" \
             -H "Authorization: Bearer $cf_token" \
             -H "Content-Type: application/json" \
             --data "{\"type\":\"A\",\"name\":\"$FULL_DOMAIN\",\"content\":\"$PUBLIC_IP\",\"ttl\":120,\"proxied\":false}" >/dev/null
     fi
     
-    # 淇濆瓨閰嶇疆
     cat > "$CONFIG_DIR/ddns.conf" <<EOF
 DDNS_PROVIDER=cloudflare
 CF_TOKEN=$cf_token
@@ -188,7 +176,6 @@ ZONE_ID=$ZONE_ID
 FULL_DOMAIN=$FULL_DOMAIN
 EOF
     
-    # 鍒涘缓DDNS鏇存柊鑴氭湰
     cat > "$CONFIG_DIR/update-ddns.sh" <<'EOF'
 #!/bin/bash
 CONFIG_DIR="/etc/vps-toolbox"
@@ -212,36 +199,33 @@ fi
 EOF
     chmod +x "$CONFIG_DIR/update-ddns.sh"
     
-    # 娣诲姞瀹氭椂浠诲姟 (姣?鍒嗛挓妫€鏌ヤ竴娆?
     (crontab -l 2>/dev/null | grep -v "update-ddns"; echo "*/5 * * * * $CONFIG_DIR/update-ddns.sh >/dev/null 2>&1") | crontab -
     
     DDNS_DOMAIN="$FULL_DOMAIN"
     
-    log "DDNS 閰嶇疆瀹屾垚!"
-    log "鍩熷悕: $FULL_DOMAIN"
-    log "褰撳墠IP: $PUBLIC_IP"
-    log "宸叉坊鍔犺嚜鍔ㄦ洿鏂板畾鏃朵换鍔?(姣?鍒嗛挓)"
+    log "DDNS configured!"
+    log "Domain: $FULL_DOMAIN"
+    log "Current IP: $PUBLIC_IP"
+    log "Auto-update cron job added (every 5 min)"
     
     echo ""
-    read -rp "鎸夊洖杞﹂敭缁х画..."
+    read -rp "Press Enter to continue..."
 }
 
-# DuckDNS
 setup_duckdns() {
     echo ""
-    info "DuckDNS 閰嶇疆"
+    info "DuckDNS Setup"
     echo "----------------------------------------"
-    read -rp "璇疯緭鍏?DuckDNS Token: " duck_token
-    read -rp "璇疯緭鍏ュ瓙鍩熷悕 (渚嬪: myvps): " duck_domain
+    read -rp "Enter DuckDNS Token: " duck_token
+    read -rp "Enter subdomain (e.g. myvps): " duck_domain
     
     if [[ -z "$duck_token" || -z "$duck_domain" ]]; then
-        error "Token 鍜屽煙鍚嶄笉鑳戒负绌?
+        error "Token and domain cannot be empty"
     fi
     
     FULL_DOMAIN="${duck_domain}.duckdns.org"
     PUBLIC_IP=$(curl -s -4 https://api.ipify.org)
     
-    # 鏇存柊DuckDNS
     curl -s "https://www.duckdns.org/update?domains=$duck_domain&token=$duck_token&ip=$PUBLIC_IP" >/dev/null
     
     cat > "$CONFIG_DIR/ddns.conf" <<EOF
@@ -265,23 +249,22 @@ EOF
     
     DDNS_DOMAIN="$FULL_DOMAIN"
     
-    log "DuckDNS 閰嶇疆瀹屾垚! 鍩熷悕: $FULL_DOMAIN"
+    log "DuckDNS configured! Domain: $FULL_DOMAIN"
     echo ""
-    read -rp "鎸夊洖杞﹂敭缁х画..."
+    read -rp "Press Enter to continue..."
 }
 
-# No-IP
 setup_noip() {
     echo ""
-    info "No-IP 閰嶇疆"
+    info "No-IP Setup"
     echo "----------------------------------------"
-    read -rp "璇疯緭鍏?No-IP 鐢ㄦ埛鍚? " noip_user
-    read -rsp "璇疯緭鍏?No-IP 瀵嗙爜: " noip_pass
+    read -rp "Enter No-IP username: " noip_user
+    read -rsp "Enter No-IP password: " noip_pass
     echo ""
-    read -rp "璇疯緭鍏ヤ富鏈哄悕 (渚嬪: myvps.ddns.net): " noip_host
+    read -rp "Enter hostname (e.g. myvps.ddns.net): " noip_host
     
     if [[ -z "$noip_user" || -z "$noip_pass" || -z "$noip_host" ]]; then
-        error "鎵€鏈夊瓧娈甸兘涓嶈兘涓虹┖"
+        error "All fields are required"
     fi
     
     FULL_DOMAIN="$noip_host"
@@ -311,34 +294,34 @@ EOF
     
     DDNS_DOMAIN="$FULL_DOMAIN"
     
-    log "No-IP 閰嶇疆瀹屾垚! 鍩熷悕: $FULL_DOMAIN"
+    log "No-IP configured! Domain: $FULL_DOMAIN"
     echo ""
-    read -rp "鎸夊洖杞﹂敭缁х画..."
+    read -rp "Press Enter to continue..."
 }
 
-# ==================== Warp 鍔熻兘 ====================
+# ==================== WARP ====================
 
 setup_warp() {
     clear
     echo -e "${CYAN}========================================${NC}"
-    echo -e "${CYAN}         WARP 涓€閿厤缃?{NC}"
+    echo -e "${CYAN}         WARP Setup${NC}"
     echo -e "${CYAN}========================================${NC}"
     echo ""
     
     if command -v warp-cli &>/dev/null; then
-        info "WARP 宸插畨瑁?
+        info "WARP already installed"
         echo ""
-        echo "  1. 鍚姩 WARP"
-        echo "  2. 鍋滄 WARP"
-        echo "  3. 鏌ョ湅鐘舵€?
-        echo "  4. 鍗歌浇 WARP"
-        echo "  5. 杩斿洖涓昏彍鍗?
+        echo "  1. Start WARP"
+        echo "  2. Stop WARP"
+        echo "  3. Check status"
+        echo "  4. Uninstall WARP"
+        echo "  5. Back to menu"
         echo ""
-        read -rp "璇烽€夋嫨 [1-5]: " warp_choice
+        read -rp "Select [1-5]: " warp_choice
         
         case $warp_choice in
-            1) warp-cli connect; log "WARP 宸插惎鍔? ;;
-            2) warp-cli disconnect; log "WARP 宸插仠姝? ;;
+            1) warp-cli connect; log "WARP started" ;;
+            2) warp-cli disconnect; log "WARP stopped" ;;
             3) warp-cli status ;;
             4) uninstall_warp ;;
             5) return ;;
@@ -346,82 +329,74 @@ setup_warp() {
         return
     fi
     
-    echo -e "${YELLOW}璇烽€夋嫨瀹夎鏂瑰紡:${NC}"
-    echo "  1. 瀹樻柟 Cloudflare WARP (鎺ㄨ崘)"
-    echo "  2. WireGuard 妯″紡 (wgcf)"
-    echo "  3. 杩斿洖涓昏彍鍗?
+    echo -e "${YELLOW}Select installation method:${NC}"
+    echo "  1. Official Cloudflare WARP (Recommended)"
+    echo "  2. WireGuard mode (wgcf)"
+    echo "  3. Back to menu"
     echo ""
-    read -rp "璇烽€夋嫨 [1-3]: " warp_install_choice
+    read -rp "Select [1-3]: " warp_install_choice
     
     case $warp_install_choice in
         1) install_warp_official ;;
         2) install_warp_wgcf ;;
         3) return ;;
-        *) warn "鏃犳晥閫夋嫨"; sleep 2; setup_warp ;;
+        *) warn "Invalid choice"; sleep 2; setup_warp ;;
     esac
 }
 
 install_warp_official() {
-    log "姝ｅ湪瀹夎 Cloudflare WARP..."
+    log "Installing Cloudflare WARP..."
     
     if [[ "$PKG_MANAGER" == "apt" ]]; then
         curl -s https://pkg.cloudflareclient.com/pubkey.gpg | gpg --yes --dearmor --output /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
         echo "deb [arch=amd64 signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/cloudflare-client.list
         apt-get update && apt-get install -y cloudflare-warp
     else
-        # CentOS/RHEL/Fedora
         curl -s https://pkg.cloudflareclient.com/cloudflare-warp-ascii.repo | tee /etc/yum.repos.d/cloudflare-warp.repo
         $PKG_MANAGER install -y cloudflare-warp
     fi
     
-    # 娉ㄥ唽骞惰繛鎺?    warp-cli registration new
+    warp-cli registration new
     warp-cli connect
-    
-    # 璁剧疆妯″紡涓篧ARP+ (鍙€?
     warp-cli set-mode warp
     
-    log "WARP 瀹夎骞跺惎鍔ㄦ垚鍔?"
+    log "WARP installed and started!"
     warp-cli status
     
     echo ""
-    read -rp "鎸夊洖杞﹂敭缁х画..."
+    read -rp "Press Enter to continue..."
 }
 
 install_warp_wgcf() {
-    log "姝ｅ湪瀹夎 wgcf (WireGuard WARP)..."
+    log "Installing wgcf (WireGuard WARP)..."
     
-    # 瀹夎 WireGuard
     if [[ "$PKG_MANAGER" == "apt" ]]; then
         apt-get install -y wireguard wireguard-tools
     else
         $PKG_MANAGER install -y wireguard-tools
     fi
     
-    # 涓嬭浇 wgcf
     WGCF_VERSION=$(curl -s https://api.github.com/repos/ViRb3/wgcf/releases/latest | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')
     wget -qO /usr/local/bin/wgcf "https://github.com/ViRb3/wgcf/releases/download/${WGCF_VERSION}/wgcf_${WGCF_VERSION//v/}_linux_amd64"
     chmod +x /usr/local/bin/wgcf
     
-    # 娉ㄥ唽
     cd /etc/wireguard
     wgcf register --accept-tos
     wgcf generate
     
-    # 閰嶇疆 WireGuard
     cp wgcf-profile.conf /etc/wireguard/warp.conf
     
-    # 鍚姩
     systemctl enable wg-quick@warp
     systemctl start wg-quick@warp
     
-    log "wgcf WARP 瀹夎鎴愬姛!"
+    log "wgcf WARP installed!"
     
     echo ""
-    read -rp "鎸夊洖杞﹂敭缁х画..."
+    read -rp "Press Enter to continue..."
 }
 
 uninstall_warp() {
-    log "姝ｅ湪鍗歌浇 WARP..."
+    log "Uninstalling WARP..."
     systemctl stop warp-svc 2>/dev/null || true
     systemctl disable warp-svc 2>/dev/null || true
     
@@ -431,81 +406,74 @@ uninstall_warp() {
         $PKG_MANAGER remove -y cloudflare-warp
     fi
     
-    log "WARP 宸插嵏杞?
+    log "WARP uninstalled"
     echo ""
-    read -rp "鎸夊洖杞﹂敭缁х画..."
+    read -rp "Press Enter to continue..."
 }
 
-# ==================== Xray 鏍稿績瀹夎 ====================
+# ==================== Xray Core ====================
 
 install_xray() {
     if command -v xray &>/dev/null; then
-        log "Xray 宸插畨瑁咃紝鐗堟湰: $(xray version | head -n1)"
+        log "Xray already installed, version: $(xray version | head -n1)"
         return 0
     fi
     
-    log "姝ｅ湪瀹夎 Xray 鏍稿績..."
+    log "Installing Xray core..."
     
-    # 浣跨敤瀹樻柟鑴氭湰瀹夎
     bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
     
     systemctl enable xray
-    log "Xray 瀹夎瀹屾垚"
+    log "Xray installed"
 }
 
-# ==================== Vless 瀹夎 ====================
+# ==================== Vless ====================
 
 install_vless() {
     clear
     echo -e "${CYAN}========================================${NC}"
-    echo -e "${CYAN}         Vless 涓€閿畨瑁?{NC}"
+    echo -e "${CYAN}         Vless Install${NC}"
     echo -e "${CYAN}========================================${NC}"
     echo ""
     
-    # 妫€鏌ユ垨鑾峰彇鍩熷悕
     if [[ -f "$CONFIG_DIR/ddns.conf" ]]; then
         source "$CONFIG_DIR/ddns.conf"
-        echo -e "${GREEN}妫€娴嬪埌宸查厤缃殑DDNS鍩熷悕: $FULL_DOMAIN${NC}"
-        read -rp "鏄惁浣跨敤姝ゅ煙鍚? [Y/n]: " use_existing
+        echo -e "${GREEN}Detected DDNS domain: $FULL_DOMAIN${NC}"
+        read -rp "Use this domain? [Y/n]: " use_existing
         if [[ ! "$use_existing" =~ ^[Nn]$ ]]; then
             DDNS_DOMAIN="$FULL_DOMAIN"
         else
-            read -rp "璇疯緭鍏ユ偍鐨勫煙鍚? " DDNS_DOMAIN
+            read -rp "Enter your domain: " DDNS_DOMAIN
         fi
     else
-        read -rp "璇疯緭鍏ユ偍鐨勫煙鍚?(鎴栧厛閰嶇疆DDNS): " DDNS_DOMAIN
+        read -rp "Enter your domain (or setup DDNS first): " DDNS_DOMAIN
     fi
     
     if [[ -z "$DDNS_DOMAIN" ]]; then
-        error "鍩熷悕涓嶈兘涓虹┖"
+        error "Domain cannot be empty"
     fi
     
-    # 瀹夎Xray
     install_xray
     
-    # 鐢熸垚閰嶇疆
     local PORT=$(shuf -i 10000-65000 -n 1)
     local UUID=$(xray uuid)
     local PRIVATE_KEY=$(xray x25519 | grep "Private key:" | awk '{print $3}')
     local PUBLIC_KEY=$(xray x25519 -i "$PRIVATE_KEY" | grep "Public key:" | awk '{print $3}')
     local SHORT_ID=$(openssl rand -hex 4)
     
-    log "姝ｅ湪鐢宠 SSL 璇佷功..."
+    log "Applying for SSL certificate..."
     
-    # 瀹夎acme.sh
     if [[ ! -f ~/.acme.sh/acme.sh ]]; then
         curl https://get.acme.sh | sh
     fi
     
     export PATH="$HOME/.acme.sh:$PATH"
     
-    # 鐢宠璇佷功
     ~/.acme.sh/acme.sh --issue -d "$DDNS_DOMAIN" --standalone --force
     ~/.acme.sh/acme.sh --install-cert -d "$DDNS_DOMAIN" \
         --key-file /usr/local/etc/xray/private.key \
         --fullchain-file /usr/local/etc/xray/cert.crt
     
-    # 鍒涘缓Vless閰嶇疆
     cat > /usr/local/etc/xray/config.json <<EOF
 {
     "log": {
@@ -572,104 +540,96 @@ install_vless() {
 }
 EOF
     
-    # 鍒涘缓TLS+WS澶囩敤閰嶇疆 (鏇村吋瀹?
     mkdir -p /usr/local/etc/xray
     
-    # 閲嶅惎Xray
     systemctl restart xray
     
-    # 淇濆瓨閰嶇疆淇℃伅
     cat > "$CONFIG_DIR/vless-info.txt" <<EOF
-========== Vless 閰嶇疆淇℃伅 ==========
-鍗忚: Vless + Reality
-鏈嶅姟鍣ㄥ湴鍧€: $DDNS_DOMAIN
-绔彛: $PORT
+========== Vless Config ==========
+Protocol: Vless + Reality
+Server: $DDNS_DOMAIN
+Port: $PORT
 UUID: $UUID
-娴佹帶: xtls-rprx-vision
-浼犺緭鍗忚: tcp
-瀹夊叏: reality
+Flow: xtls-rprx-vision
+Network: tcp
+Security: reality
 Public Key: $PUBLIC_KEY
 Short ID: $SHORT_ID
 SNI: www.cloudflare.com
 ====================================
 EOF
     
-    # 鐢熸垚鍒嗕韩閾炬帴
     local VLESS_LINK="vless://${UUID}@${DDNS_DOMAIN}:${PORT}?security=reality&sni=www.cloudflare.com&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp&flow=xtls-rprx-vision#Vless-Reality-$(hostname)"
     
     echo "$VLESS_LINK" > "$CONFIG_DIR/vless-link.txt"
     
-    # 鐢熸垚浜岀淮鐮?    if command -v qrencode &>/dev/null; then
+    if command -v qrencode &>/dev/null; then
         qrencode -t ANSIUTF8 "$VLESS_LINK"
         qrencode -o "$CONFIG_DIR/vless-qr.png" "$VLESS_LINK"
     fi
     
-    # 娣诲姞璇佷功鑷姩缁
     (crontab -l 2>/dev/null | grep -v "acme.sh"; echo "0 3 * * * ~/.acme.sh/acme.sh --cron --home ~/.acme.sh >/dev/null 2>&1 && systemctl restart xray") | crontab -
     
     clear
     echo -e "${GREEN}========================================${NC}"
-    echo -e "${GREEN}      Vless 瀹夎鎴愬姛!${NC}"
+    echo -e "${GREEN}      Vless installed!${NC}"
     echo -e "${GREEN}========================================${NC}"
     echo ""
     cat "$CONFIG_DIR/vless-info.txt"
     echo ""
-    echo -e "${CYAN}鍒嗕韩閾炬帴:${NC}"
+    echo -e "${CYAN}Share link:${NC}"
     echo "$VLESS_LINK"
     echo ""
     
     if [[ -f "$CONFIG_DIR/vless-qr.png" ]]; then
-        echo -e "${CYAN}浜岀淮鐮佸凡淇濆瓨鑷? $CONFIG_DIR/vless-qr.png${NC}"
+        echo -e "${CYAN}QR saved to: $CONFIG_DIR/vless-qr.png${NC}"
     fi
     
     echo ""
-    log "Vless 瀹夎瀹屾垚!"
+    log "Vless installation complete!"
     echo ""
-    read -rp "鎸夊洖杞﹂敭缁х画..."
+    read -rp "Press Enter to continue..."
 }
 
-# ==================== Hysteria2 瀹夎 ====================
+# ==================== Hysteria2 ====================
 
 install_hysteria2() {
     clear
     echo -e "${CYAN}========================================${NC}"
-    echo -e "${CYAN}         Hysteria2 涓€閿畨瑁?{NC}"
+    echo -e "${CYAN}         Hysteria2 Install${NC}"
     echo -e "${CYAN}========================================${NC}"
     echo ""
     
-    # 妫€鏌ュ煙鍚?    if [[ -f "$CONFIG_DIR/ddns.conf" ]]; then
+    if [[ -f "$CONFIG_DIR/ddns.conf" ]]; then
         source "$CONFIG_DIR/ddns.conf"
-        echo -e "${GREEN}妫€娴嬪埌宸查厤缃殑DDNS鍩熷悕: $FULL_DOMAIN${NC}"
-        read -rp "鏄惁浣跨敤姝ゅ煙鍚? [Y/n]: " use_existing
+        echo -e "${GREEN}Detected DDNS domain: $FULL_DOMAIN${NC}"
+        read -rp "Use this domain? [Y/n]: " use_existing
         if [[ ! "$use_existing" =~ ^[Nn]$ ]]; then
             DDNS_DOMAIN="$FULL_DOMAIN"
         else
-            read -rp "璇疯緭鍏ユ偍鐨勫煙鍚? " DDNS_DOMAIN
+            read -rp "Enter your domain: " DDNS_DOMAIN
         fi
     else
-        read -rp "璇疯緭鍏ユ偍鐨勫煙鍚? " DDNS_DOMAIN
+        read -rp "Enter your domain: " DDNS_DOMAIN
     fi
     
     if [[ -z "$DDNS_DOMAIN" ]]; then
-        error "鍩熷悕涓嶈兘涓虹┖"
+        error "Domain cannot be empty"
     fi
     
-    log "姝ｅ湪瀹夎 Hysteria2..."
+    log "Installing Hysteria2..."
     
-    # 瀹夎Hysteria2
     bash <(curl -fsSL https://get.hy2.sh/)
     
     local PORT=$(shuf -i 10000-65000 -n 1)
     local PASSWORD=$(openssl rand -base64 16)
     
-    # 鐢熸垚鑷鍚嶈瘉涔?(Hysteria2鎺ㄨ崘)
     mkdir -p /etc/hysteria
     openssl ecparam -genkey -name prime256v1 -out /etc/hysteria/server.key
     openssl req -new -x509 -days 3650 -key /etc/hysteria/server.key \
         -out /etc/hysteria/server.crt -subj "/CN=$DDNS_DOMAIN" \
         -addext "subjectAltName=DNS:$DDNS_DOMAIN"
     
-    # 鍒涘缓閰嶇疆
     cat > /etc/hysteria/config.yaml <<EOF
 listen: :$PORT
 
@@ -699,18 +659,17 @@ EOF
     systemctl enable hysteria-server
     systemctl restart hysteria-server
     
-    # 淇濆瓨閰嶇疆
     cat > "$CONFIG_DIR/hysteria2-info.txt" <<EOF
-========== Hysteria2 閰嶇疆淇℃伅 ==========
-鏈嶅姟鍣ㄥ湴鍧€: $DDNS_DOMAIN
-绔彛: $PORT
-瀵嗙爜: $PASSWORD
-浼犺緭鍗忚: udp
-TLS: 鑷鍚嶈瘉涔?SNI: $DDNS_DOMAIN
+========== Hysteria2 Config ==========
+Server: $DDNS_DOMAIN
+Port: $PORT
+Password: $PASSWORD
+Protocol: udp
+TLS: self-signed
+SNI: $DDNS_DOMAIN
 =======================================
 EOF
     
-    # 鐢熸垚鍒嗕韩閾炬帴
     local HY2_LINK="hysteria2://${PASSWORD}@${DDNS_DOMAIN}:${PORT}?sni=${DDNS_DOMAIN}&insecure=1#Hysteria2-$(hostname)"
     echo "$HY2_LINK" > "$CONFIG_DIR/hysteria2-link.txt"
     
@@ -721,37 +680,36 @@ EOF
     
     clear
     echo -e "${GREEN}========================================${NC}"
-    echo -e "${GREEN}      Hysteria2 瀹夎鎴愬姛!${NC}"
+    echo -e "${GREEN}      Hysteria2 installed!${NC}"
     echo -e "${GREEN}========================================${NC}"
     echo ""
     cat "$CONFIG_DIR/hysteria2-info.txt"
     echo ""
-    echo -e "${CYAN}鍒嗕韩閾炬帴:${NC}"
+    echo -e "${CYAN}Share link:${NC}"
     echo "$HY2_LINK"
     echo ""
     
     if [[ -f "$CONFIG_DIR/hysteria2-qr.png" ]]; then
-        echo -e "${CYAN}浜岀淮鐮佸凡淇濆瓨鑷? $CONFIG_DIR/hysteria2-qr.png${NC}"
+        echo -e "${CYAN}QR saved to: $CONFIG_DIR/hysteria2-qr.png${NC}"
     fi
     
     echo ""
-    log "Hysteria2 瀹夎瀹屾垚!"
+    log "Hysteria2 installation complete!"
     echo ""
-    read -rp "鎸夊洖杞﹂敭缁х画..."
+    read -rp "Press Enter to continue..."
 }
 
-# ==================== Shadowsocks 瀹夎 ====================
+# ==================== Shadowsocks ====================
 
 install_shadowsocks() {
     clear
     echo -e "${CYAN}========================================${NC}"
-    echo -e "${CYAN}       Shadowsocks 涓€閿畨瑁?{NC}"
+    echo -e "${CYAN}       Shadowsocks Install${NC}"
     echo -e "${CYAN}========================================${NC}"
     echo ""
     
-    log "姝ｅ湪瀹夎 Shadowsocks..."
+    log "Installing Shadowsocks..."
     
-    # 瀹夎 shadowsocks-libev
     if [[ "$PKG_MANAGER" == "apt" ]]; then
         apt-get install -y shadowsocks-libev
     else
@@ -778,17 +736,15 @@ EOF
     systemctl enable shadowsocks-libev
     systemctl restart shadowsocks-libev
     
-    # 淇濆瓨閰嶇疆
     cat > "$CONFIG_DIR/ss-info.txt" <<EOF
-========== Shadowsocks 閰嶇疆淇℃伅 ==========
-鏈嶅姟鍣ㄥ湴鍧€: $(curl -s -4 https://api.ipify.org)
-绔彛: $PORT
-瀵嗙爜: $PASSWORD
-鍔犲瘑鏂瑰紡: $METHOD
+========== Shadowsocks Config ==========
+Server: $(curl -s -4 https://api.ipify.org)
+Port: $PORT
+Password: $PASSWORD
+Method: $METHOD
 =========================================
 EOF
     
-    # 鐢熸垚鍒嗕韩閾炬帴
     local SS_LINK="ss://$(echo -n "$METHOD:$PASSWORD" | base64 -w 0)@$(curl -s -4 https://api.ipify.org):$PORT#SS-$(hostname)"
     echo "$SS_LINK" > "$CONFIG_DIR/ss-link.txt"
     
@@ -799,44 +755,44 @@ EOF
     
     clear
     echo -e "${GREEN}========================================${NC}"
-    echo -e "${GREEN}      Shadowsocks 瀹夎鎴愬姛!${NC}"
+    echo -e "${GREEN}      Shadowsocks installed!${NC}"
     echo -e "${GREEN}========================================${NC}"
     echo ""
     cat "$CONFIG_DIR/ss-info.txt"
     echo ""
-    echo -e "${CYAN}鍒嗕韩閾炬帴:${NC}"
+    echo -e "${CYAN}Share link:${NC}"
     echo "$SS_LINK"
     echo ""
     
-    log "Shadowsocks 瀹夎瀹屾垚!"
+    log "Shadowsocks installation complete!"
     echo ""
-    read -rp "鎸夊洖杞﹂敭缁х画..."
+    read -rp "Press Enter to continue..."
 }
 
-# ==================== VMess 瀹夎 ====================
+# ==================== VMess ====================
 
 install_vmess() {
     clear
     echo -e "${CYAN}========================================${NC}"
-    echo -e "${CYAN}         VMess 涓€閿畨瑁?{NC}"
+    echo -e "${CYAN}         VMess Install${NC}"
     echo -e "${CYAN}========================================${NC}"
     echo ""
     
-    # 妫€鏌ュ煙鍚?    if [[ -f "$CONFIG_DIR/ddns.conf" ]]; then
+    if [[ -f "$CONFIG_DIR/ddns.conf" ]]; then
         source "$CONFIG_DIR/ddns.conf"
-        echo -e "${GREEN}妫€娴嬪埌宸查厤缃殑DDNS鍩熷悕: $FULL_DOMAIN${NC}"
-        read -rp "鏄惁浣跨敤姝ゅ煙鍚? [Y/n]: " use_existing
+        echo -e "${GREEN}Detected DDNS domain: $FULL_DOMAIN${NC}"
+        read -rp "Use this domain? [Y/n]: " use_existing
         if [[ ! "$use_existing" =~ ^[Nn]$ ]]; then
             DDNS_DOMAIN="$FULL_DOMAIN"
         else
-            read -rp "璇疯緭鍏ユ偍鐨勫煙鍚? " DDNS_DOMAIN
+            read -rp "Enter your domain: " DDNS_DOMAIN
         fi
     else
-        read -rp "璇疯緭鍏ユ偍鐨勫煙鍚?(鎴栧厛閰嶇疆DDNS): " DDNS_DOMAIN
+        read -rp "Enter your domain (or setup DDNS first): " DDNS_DOMAIN
     fi
     
     if [[ -z "$DDNS_DOMAIN" ]]; then
-        error "鍩熷悕涓嶈兘涓虹┖"
+        error "Domain cannot be empty"
     fi
     
     install_xray
@@ -845,7 +801,7 @@ install_vmess() {
     local UUID=$(xray uuid)
     local WS_PATH="/$(openssl rand -hex 8)"
     
-    log "姝ｅ湪鐢宠 SSL 璇佷功..."
+    log "Applying for SSL certificate..."
     
     if [[ ! -f ~/.acme.sh/acme.sh ]]; then
         curl https://get.acme.sh | sh
@@ -902,21 +858,21 @@ install_vmess() {
 }
 EOF
     
-    # 浣跨敤鍗曠嫭鐨勯厤缃枃浠惰繍琛?    cp /usr/local/etc/xray/vmess.json /usr/local/etc/xray/config.json
+    cp /usr/local/etc/xray/vmess.json /usr/local/etc/xray/config.json
     systemctl restart xray
     
     cat > "$CONFIG_DIR/vmess-info.txt" <<EOF
-========== VMess 閰嶇疆淇℃伅 ==========
-鏈嶅姟鍣ㄥ湴鍧€: $DDNS_DOMAIN
-绔彛: $PORT
+========== VMess Config ==========
+Server: $DDNS_DOMAIN
+Port: $PORT
 UUID: $UUID
-棰濆ID: 0
-浼犺緭鍗忚: ws
-WebSocket璺緞: $WS_PATH
-TLS: 寮€鍚?====================================
+AlterID: 0
+Network: ws
+WebSocket Path: $WS_PATH
+TLS: enabled
+====================================
 EOF
     
-    # 鐢熸垚VMess閾炬帴
     local VMESS_JSON='{"v":"2","ps":"VMess-'$(hostname)'","add":"'$DDNS_DOMAIN'","port":"'$PORT'","id":"'$UUID'","aid":"0","scy":"auto","net":"ws","type":"none","host":"'$DDNS_DOMAIN'","path":"'$WS_PATH'","tls":"tls","sni":"'$DDNS_DOMAIN'"}'
     local VMESS_LINK="vmess://$(echo -n "$VMESS_JSON" | base64 -w 0)"
     echo "$VMESS_LINK" > "$CONFIG_DIR/vmess-link.txt"
@@ -928,49 +884,48 @@ EOF
     
     clear
     echo -e "${GREEN}========================================${NC}"
-    echo -e "${GREEN}      VMess 瀹夎鎴愬姛!${NC}"
+    echo -e "${GREEN}      VMess installed!${NC}"
     echo -e "${GREEN}========================================${NC}"
     echo ""
     cat "$CONFIG_DIR/vmess-info.txt"
     echo ""
-    echo -e "${CYAN}鍒嗕韩閾炬帴:${NC}"
+    echo -e "${CYAN}Share link:${NC}"
     echo "$VMESS_LINK"
     echo ""
     
-    log "VMess 瀹夎瀹屾垚!"
+    log "VMess installation complete!"
     echo ""
-    read -rp "鎸夊洖杞﹂敭缁х画..."
+    read -rp "Press Enter to continue..."
 }
 
-# ==================== Trojan 瀹夎 ====================
+# ==================== Trojan ====================
 
 install_trojan() {
     clear
     echo -e "${CYAN}========================================${NC}"
-    echo -e "${CYAN}         Trojan 涓€閿畨瑁?{NC}"
+    echo -e "${CYAN}         Trojan Install${NC}"
     echo -e "${CYAN}========================================${NC}"
     echo ""
     
-    # 妫€鏌ュ煙鍚?    if [[ -f "$CONFIG_DIR/ddns.conf" ]]; then
+    if [[ -f "$CONFIG_DIR/ddns.conf" ]]; then
         source "$CONFIG_DIR/ddns.conf"
-        echo -e "${GREEN}妫€娴嬪埌宸查厤缃殑DDNS鍩熷悕: $FULL_DOMAIN${NC}"
-        read -rp "鏄惁浣跨敤姝ゅ煙鍚? [Y/n]: " use_existing
+        echo -e "${GREEN}Detected DDNS domain: $FULL_DOMAIN${NC}"
+        read -rp "Use this domain? [Y/n]: " use_existing
         if [[ ! "$use_existing" =~ ^[Nn]$ ]]; then
             DDNS_DOMAIN="$FULL_DOMAIN"
         else
-            read -rp "璇疯緭鍏ユ偍鐨勫煙鍚? " DDNS_DOMAIN
+            read -rp "Enter your domain: " DDNS_DOMAIN
         fi
     else
-        read -rp "璇疯緭鍏ユ偍鐨勫煙鍚?(鎴栧厛閰嶇疆DDNS): " DDNS_DOMAIN
+        read -rp "Enter your domain (or setup DDNS first): " DDNS_DOMAIN
     fi
     
     if [[ -z "$DDNS_DOMAIN" ]]; then
-        error "鍩熷悕涓嶈兘涓虹┖"
+        error "Domain cannot be empty"
     fi
     
-    log "姝ｅ湪瀹夎 Trojan..."
+    log "Installing Trojan..."
     
-    # 瀹夎Trojan-go (鎺ㄨ崘锛屾敮鎸佹洿澶氱壒鎬?
     local TROJAN_VERSION=$(curl -s https://api.github.com/repos/p4gefau1t/trojan-go/releases/latest | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')
     wget -qO /tmp/trojan-go.tar.gz "https://github.com/p4gefau1t/trojan-go/releases/download/${TROJAN_VERSION}/trojan-go-linux-amd64.zip"
     
@@ -984,7 +939,7 @@ install_trojan() {
     local PASSWORD=$(openssl rand -base64 16)
     local WS_PATH="/$(openssl rand -hex 8)"
     
-    log "姝ｅ湪鐢宠 SSL 璇佷功..."
+    log "Applying for SSL certificate..."
     
     if [[ ! -f ~/.acme.sh/acme.sh ]]; then
         curl https://get.acme.sh | sh
@@ -1021,7 +976,6 @@ install_trojan() {
 }
 EOF
     
-    # 鍒涘缓systemd鏈嶅姟
     cat > /etc/systemd/system/trojan-go.service <<EOF
 [Unit]
 Description=Trojan-Go Server
@@ -1041,17 +995,17 @@ EOF
     systemctl restart trojan-go
     
     cat > "$CONFIG_DIR/trojan-info.txt" <<EOF
-========== Trojan 閰嶇疆淇℃伅 ==========
-鏈嶅姟鍣ㄥ湴鍧€: $DDNS_DOMAIN
-绔彛: $PORT
-瀵嗙爜: $PASSWORD
-浼犺緭鍗忚: websocket
-WebSocket璺緞: $WS_PATH
-TLS: 寮€鍚?SNI: $DDNS_DOMAIN
+========== Trojan Config ==========
+Server: $DDNS_DOMAIN
+Port: $PORT
+Password: $PASSWORD
+Protocol: websocket
+WebSocket Path: $WS_PATH
+TLS: enabled
+SNI: $DDNS_DOMAIN
 =====================================
 EOF
     
-    # 鐢熸垚鍒嗕韩閾炬帴
     local TROJAN_LINK="trojan://${PASSWORD}@${DDNS_DOMAIN}:${PORT}?security=tls&sni=${DDNS_DOMAIN}&type=ws&host=${DDNS_DOMAIN}&path=${WS_PATH}#Trojan-$(hostname)"
     echo "$TROJAN_LINK" > "$CONFIG_DIR/trojan-link.txt"
     
@@ -1062,106 +1016,106 @@ EOF
     
     clear
     echo -e "${GREEN}========================================${NC}"
-    echo -e "${GREEN}      Trojan 瀹夎鎴愬姛!${NC}"
+    echo -e "${GREEN}      Trojan installed!${NC}"
     echo -e "${GREEN}========================================${NC}"
     echo ""
     cat "$CONFIG_DIR/trojan-info.txt"
     echo ""
-    echo -e "${CYAN}鍒嗕韩閾炬帴:${NC}"
+    echo -e "${CYAN}Share link:${NC}"
     echo "$TROJAN_LINK"
     echo ""
     
-    log "Trojan 瀹夎瀹屾垚!"
+    log "Trojan installation complete!"
     echo ""
-    read -rp "鎸夊洖杞﹂敭缁х画..."
+    read -rp "Press Enter to continue..."
 }
 
-# ==================== 鏌ョ湅閰嶇疆 ====================
+# ==================== View Config ====================
 
 view_config() {
     clear
     echo -e "${CYAN}========================================${NC}"
-    echo -e "${CYAN}         鏌ョ湅宸插畨瑁呮湇鍔￠厤缃?{NC}"
+    echo -e "${CYAN}         View Configurations${NC}"
     echo -e "${CYAN}========================================${NC}"
     echo ""
     
     if [[ -f "$CONFIG_DIR/vless-info.txt" ]]; then
-        echo -e "${GREEN}銆怴less 閰嶇疆銆?{NC}"
+        echo -e "${GREEN}[Vless Config]${NC}"
         cat "$CONFIG_DIR/vless-info.txt"
         echo ""
-        echo -e "${CYAN}鍒嗕韩閾炬帴:${NC}"
+        echo -e "${CYAN}Share link:${NC}"
         cat "$CONFIG_DIR/vless-link.txt"
         echo ""
         echo "----------------------------------------"
     fi
     
     if [[ -f "$CONFIG_DIR/hysteria2-info.txt" ]]; then
-        echo -e "${GREEN}銆怘ysteria2 閰嶇疆銆?{NC}"
+        echo -e "${GREEN}[Hysteria2 Config]${NC}"
         cat "$CONFIG_DIR/hysteria2-info.txt"
         echo ""
-        echo -e "${CYAN}鍒嗕韩閾炬帴:${NC}"
+        echo -e "${CYAN}Share link:${NC}"
         cat "$CONFIG_DIR/hysteria2-link.txt"
         echo ""
         echo "----------------------------------------"
     fi
     
     if [[ -f "$CONFIG_DIR/ss-info.txt" ]]; then
-        echo -e "${GREEN}銆怱hadowsocks 閰嶇疆銆?{NC}"
+        echo -e "${GREEN}[Shadowsocks Config]${NC}"
         cat "$CONFIG_DIR/ss-info.txt"
         echo ""
-        echo -e "${CYAN}鍒嗕韩閾炬帴:${NC}"
+        echo -e "${CYAN}Share link:${NC}"
         cat "$CONFIG_DIR/ss-link.txt"
         echo ""
         echo "----------------------------------------"
     fi
     
     if [[ -f "$CONFIG_DIR/vmess-info.txt" ]]; then
-        echo -e "${GREEN}銆怴Mess 閰嶇疆銆?{NC}"
+        echo -e "${GREEN}[VMess Config]${NC}"
         cat "$CONFIG_DIR/vmess-info.txt"
         echo ""
-        echo -e "${CYAN}鍒嗕韩閾炬帴:${NC}"
+        echo -e "${CYAN}Share link:${NC}"
         cat "$CONFIG_DIR/vmess-link.txt"
         echo ""
         echo "----------------------------------------"
     fi
     
     if [[ -f "$CONFIG_DIR/trojan-info.txt" ]]; then
-        echo -e "${GREEN}銆怲rojan 閰嶇疆銆?{NC}"
+        echo -e "${GREEN}[Trojan Config]${NC}"
         cat "$CONFIG_DIR/trojan-info.txt"
         echo ""
-        echo -e "${CYAN}鍒嗕韩閾炬帴:${NC}"
+        echo -e "${CYAN}Share link:${NC}"
         cat "$CONFIG_DIR/trojan-link.txt"
         echo ""
         echo "----------------------------------------"
     fi
     
     if [[ -f "$CONFIG_DIR/ddns.conf" ]]; then
-        echo -e "${GREEN}銆怐DNS 閰嶇疆銆?{NC}"
+        echo -e "${GREEN}[DDNS Config]${NC}"
         cat "$CONFIG_DIR/ddns.conf"
         echo ""
     fi
     
     echo ""
-    read -rp "鎸夊洖杞﹂敭缁х画..."
+    read -rp "Press Enter to continue..."
 }
 
-# ==================== 鍗歌浇鏈嶅姟 ====================
+# ==================== Uninstall ====================
 
 uninstall_service() {
     clear
     echo -e "${CYAN}========================================${NC}"
-    echo -e "${CYAN}         鍗歌浇鏈嶅姟${NC}"
+    echo -e "${CYAN}         Uninstall Service${NC}"
     echo -e "${CYAN}========================================${NC}"
     echo ""
-    echo "  1. 鍗歌浇 Vless"
-    echo "  2. 鍗歌浇 Hysteria2"
-    echo "  3. 鍗歌浇 Shadowsocks"
-    echo "  4. 鍗歌浇 VMess"
-    echo "  5. 鍗歌浇 Trojan"
-    echo "  6. 鍗歌浇鎵€鏈夋湇鍔?
-    echo "  7. 杩斿洖涓昏彍鍗?
+    echo "  1. Uninstall Vless"
+    echo "  2. Uninstall Hysteria2"
+    echo "  3. Uninstall Shadowsocks"
+    echo "  4. Uninstall VMess"
+    echo "  5. Uninstall Trojan"
+    echo "  6. Uninstall All"
+    echo "  7. Back to menu"
     echo ""
-    read -rp "璇烽€夋嫨 [1-7]: " uninstall_choice
+    read -rp "Select [1-7]: " uninstall_choice
     
     case $uninstall_choice in
         1)
@@ -1169,7 +1123,7 @@ uninstall_service() {
             systemctl disable xray 2>/dev/null || true
             rm -f /usr/local/etc/xray/config.json
             rm -f "$CONFIG_DIR"/vless-*
-            log "Vless 宸插嵏杞?
+            log "Vless uninstalled"
             ;;
         2)
             systemctl stop hysteria-server 2>/dev/null || true
@@ -1177,20 +1131,20 @@ uninstall_service() {
             rm -rf /etc/hysteria
             rm -f /usr/local/bin/hysteria
             rm -f "$CONFIG_DIR"/hysteria2-*
-            log "Hysteria2 宸插嵏杞?
+            log "Hysteria2 uninstalled"
             ;;
         3)
             systemctl stop shadowsocks-libev 2>/dev/null || true
             systemctl disable shadowsocks-libev 2>/dev/null || true
             rm -f "$CONFIG_DIR"/ss-*
-            log "Shadowsocks 宸插嵏杞?
+            log "Shadowsocks uninstalled"
             ;;
         4)
             systemctl stop xray 2>/dev/null || true
             systemctl disable xray 2>/dev/null || true
             rm -f /usr/local/etc/xray/vmess.json
             rm -f "$CONFIG_DIR"/vmess-*
-            log "VMess 宸插嵏杞?
+            log "VMess uninstalled"
             ;;
         5)
             systemctl stop trojan-go 2>/dev/null || true
@@ -1198,7 +1152,7 @@ uninstall_service() {
             rm -rf /etc/trojan
             rm -f /usr/local/bin/trojan-go
             rm -f "$CONFIG_DIR"/trojan-*
-            log "Trojan 宸插嵏杞?
+            log "Trojan uninstalled"
             ;;
         6)
             systemctl stop xray hysteria-server shadowsocks-libev trojan-go 2>/dev/null || true
@@ -1206,40 +1160,40 @@ uninstall_service() {
             rm -rf /usr/local/etc/xray /etc/hysteria /etc/trojan
             rm -f /usr/local/bin/xray /usr/local/bin/hysteria /usr/local/bin/trojan-go
             rm -f "$CONFIG_DIR"/*-info.txt "$CONFIG_DIR"/*-link.txt "$CONFIG_DIR"/*-qr.png
-            log "鎵€鏈夋湇鍔″凡鍗歌浇"
+            log "All services uninstalled"
             ;;
         7) return ;;
     esac
     
     echo ""
-    read -rp "鎸夊洖杞﹂敭缁х画..."
+    read -rp "Press Enter to continue..."
 }
 
-# ==================== 涓昏彍鍗?====================
+# ==================== Main Menu ====================
 
 show_menu() {
     clear
-    echo -e "${CYAN}鈺斺晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晽${NC}"
-    echo -e "${CYAN}鈺?{NC}           ${GREEN}VPS Toolbox - 澶氬姛鑳戒竴閿儴缃插伐鍏?{NC}                  ${CYAN}鈺?{NC}"
-    echo -e "${CYAN}鈺犫晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨暎${NC}"
-    echo -e "${CYAN}鈺?{NC}                                                              ${CYAN}鈺?{NC}"
-    echo -e "${CYAN}鈺?{NC}  ${YELLOW}銆怐DNS & 缃戠粶銆?{NC}                                            ${CYAN}鈺?{NC}"
-    echo -e "${CYAN}鈺?{NC}   1. DDNS 鍩熷悕鐢宠涓庣鐞?(鑷姩缁)                          ${CYAN}鈺?{NC}"
-    echo -e "${CYAN}鈺?{NC}   2. WARP 涓€閿厤缃?                                          ${CYAN}鈺?{NC}"
-    echo -e "${CYAN}鈺?{NC}                                                              ${CYAN}鈺?{NC}"
-    echo -e "${CYAN}鈺?{NC}  ${YELLOW}銆愪唬鐞嗗崗璁€?{NC}                                               ${CYAN}鈺?{NC}"
-    echo -e "${CYAN}鈺?{NC}   3. 瀹夎 Vless + Reality (鎺ㄨ崘)                             ${CYAN}鈺?{NC}"
-    echo -e "${CYAN}鈺?{NC}   4. 瀹夎 Hysteria2 (鎺ㄨ崘)                                   ${CYAN}鈺?{NC}"
-    echo -e "${CYAN}鈺?{NC}   5. 瀹夎 Shadowsocks                                        ${CYAN}鈺?{NC}"
-    echo -e "${CYAN}鈺?{NC}   6. 瀹夎 VMess + WebSocket                                  ${CYAN}鈺?{NC}"
-    echo -e "${CYAN}鈺?{NC}   7. 瀹夎 Trojan + WebSocket                                 ${CYAN}鈺?{NC}"
-    echo -e "${CYAN}鈺?{NC}                                                              ${CYAN}鈺?{NC}"
-    echo -e "${CYAN}鈺?{NC}  ${YELLOW}銆愮鐞嗐€?{NC}                                                   ${CYAN}鈺?{NC}"
-    echo -e "${CYAN}鈺?{NC}   8. 鏌ョ湅鎵€鏈夐厤缃?                                           ${CYAN}鈺?{NC}"
-    echo -e "${CYAN}鈺?{NC}   9. 鍗歌浇鏈嶅姟                                                ${CYAN}鈺?{NC}"
-    echo -e "${CYAN}鈺?{NC}   0. 閫€鍑鸿剼鏈?                                               ${CYAN}鈺?{NC}"
-    echo -e "${CYAN}鈺?{NC}                                                              ${CYAN}鈺?{NC}"
-    echo -e "${CYAN}鈺氣晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨暆${NC}"
+    echo -e "${CYAN}╔══════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║${NC}           ${GREEN}VPS Toolbox - All-in-One Deploy Tool${NC}              ${CYAN}║${NC}"
+    echo -e "${CYAN}╠══════════════════════════════════════════════════════════════╣${NC}"
+    echo -e "${CYAN}║${NC}                                                              ${CYAN}║${NC}"
+    echo -e "${CYAN}║${NC}  ${YELLOW}[DDNS & Network]${NC}                                            ${CYAN}║${NC}"
+    echo -e "${CYAN}║${NC}   1. DDNS Setup (Auto-renew)                                 ${CYAN}║${NC}"
+    echo -e "${CYAN}║${NC}   2. WARP Setup                                              ${CYAN}║${NC}"
+    echo -e "${CYAN}║${NC}                                                              ${CYAN}║${NC}"
+    echo -e "${CYAN}║${NC}  ${YELLOW}[Proxy Protocols]${NC}                                           ${CYAN}║${NC}"
+    echo -e "${CYAN}║${NC}   3. Install Vless + Reality (Recommended)                   ${CYAN}║${NC}"
+    echo -e "${CYAN}║${NC}   4. Install Hysteria2 (Recommended)                         ${CYAN}║${NC}"
+    echo -e "${CYAN}║${NC}   5. Install Shadowsocks                                     ${CYAN}║${NC}"
+    echo -e "${CYAN}║${NC}   6. Install VMess + WebSocket                               ${CYAN}║${NC}"
+    echo -e "${CYAN}║${NC}   7. Install Trojan + WebSocket                              ${CYAN}║${NC}"
+    echo -e "${CYAN}║${NC}                                                              ${CYAN}║${NC}"
+    echo -e "${CYAN}║${NC}  ${YELLOW}[Management]${NC}                                                ${CYAN}║${NC}"
+    echo -e "${CYAN}║${NC}   8. View All Configs                                        ${CYAN}║${NC}"
+    echo -e "${CYAN}║${NC}   9. Uninstall Service                                       ${CYAN}║${NC}"
+    echo -e "${CYAN}║${NC}   0. Exit                                                    ${CYAN}║${NC}"
+    echo -e "${CYAN}║${NC}                                                              ${CYAN}║${NC}"
+    echo -e "${CYAN}╚══════════════════════════════════════════════════════════════╝${NC}"
     echo ""
 }
 
@@ -1250,7 +1204,7 @@ main() {
     
     while true; do
         show_menu
-        read -rp "璇烽€夋嫨鎿嶄綔 [0-9]: " choice
+        read -rp "Select operation [0-9]: " choice
         
         case $choice in
             1) setup_ddns ;;
@@ -1263,15 +1217,15 @@ main() {
             8) view_config ;;
             9) uninstall_service ;;
             0)
-                echo -e "${GREEN}鎰熻阿浣跨敤 VPS Toolbox锛屽啀瑙?${NC}"
+                echo -e "${GREEN}Thanks for using VPS Toolbox, goodbye!${NC}"
                 exit 0
                 ;;
             *)
-                warn "鏃犳晥閫夋嫨锛岃閲嶆柊杈撳叆"
+                warn "Invalid choice, please try again"
                 sleep 1
                 ;;
         esac
     done
 }
 
-# 杩愯涓诲嚱鏁?main "$@"
+main "$@"
