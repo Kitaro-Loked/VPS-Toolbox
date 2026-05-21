@@ -1,8 +1,7 @@
 #!/bin/bash
 # ============================================================
-# VPS Toolbox - 一键部署脚本
-# 功能: DDNS域名申请/Warp配置/Vless/Hysteria2/SS/VMess/Trojan
-# 作者: VPS-Toolbox
+# VPS Toolbox - 一键部署脚�?# 功能: DDNS域名申请/Warp配置/Vless/Hysteria2/SS/VMess/Trojan
+# 作�? VPS-Toolbox
 # 版本: 1.0.0
 # ============================================================
 
@@ -44,18 +43,17 @@ info() {
 # 检查root权限
 check_root() {
     if [[ $EUID -ne 0 ]]; then
-        error "请使用 root 用户运行此脚本"
+        error "请使�?root 用户运行此脚�?
     fi
 }
 
-# 检查系统类型
-check_system() {
+# 检查系统类�?check_system() {
     if [[ -f /etc/os-release ]]; then
         . /etc/os-release
         OS=$NAME
         VER=$VERSION_ID
     else
-        error "无法检测操作系统类型"
+        error "无法检测操作系统类�?
     fi
     
     case $OS in
@@ -103,14 +101,14 @@ install_dependencies() {
 setup_ddns() {
     clear
     echo -e "${CYAN}========================================${NC}"
-    echo -e "${CYAN}         DDNS 域名申请与管理${NC}"
+    echo -e "${CYAN}         DDNS 域名申请与管�?{NC}"
     echo -e "${CYAN}========================================${NC}"
     echo ""
-    echo -e "${YELLOW}请选择 DDNS 服务商:${NC}"
+    echo -e "${YELLOW}请选择 DDNS 服务�?${NC}"
     echo "  1. Cloudflare (推荐)"
     echo "  2. DuckDNS"
     echo "  3. No-IP"
-    echo "  4. 返回主菜单"
+    echo "  4. 返回主菜�?
     echo ""
     read -rp "请选择 [1-4]: " ddns_choice
     
@@ -128,12 +126,12 @@ setup_cloudflare_ddns() {
     echo ""
     info "Cloudflare DDNS 配置"
     echo "----------------------------------------"
-    read -rp "请输入 Cloudflare API Token: " cf_token
-    read -rp "请输入域名 (例如: example.com): " cf_domain
+    read -rp "请输�?Cloudflare API Token: " cf_token
+    read -rp "请输入域�?(例如: example.com): " cf_domain
     read -rp "请输入子域名前缀 (例如: vps，留空使用根域名): " cf_subdomain
     
     if [[ -z "$cf_token" || -z "$cf_domain" ]]; then
-        error "API Token 和域名不能为空"
+        error "API Token 和域名不能为�?
     fi
     
     # 获取Zone ID
@@ -143,7 +141,7 @@ setup_cloudflare_ddns() {
         -H "Content-Type: application/json" | jq -r '.result[0].id')
     
     if [[ "$ZONE_ID" == "null" || -z "$ZONE_ID" ]]; then
-        error "无法获取 Zone ID，请检查 API Token 和域名"
+        error "无法获取 Zone ID，请检�?API Token 和域�?
     fi
     
     log "Zone ID: $ZONE_ID"
@@ -161,14 +159,12 @@ setup_cloudflare_ddns() {
         FULL_DOMAIN="$cf_domain"
     fi
     
-    # 检查记录是否存在
-    RECORD_ID=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records?name=$FULL_DOMAIN" \
+    # 检查记录是否存�?    RECORD_ID=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records?name=$FULL_DOMAIN" \
         -H "Authorization: Bearer $cf_token" \
         -H "Content-Type: application/json" | jq -r '.result[0].id')
     
     if [[ "$RECORD_ID" == "null" || -z "$RECORD_ID" ]]; then
-        # 创建新记录
-        log "创建 DNS 记录..."
+        # 创建新记�?        log "创建 DNS 记录..."
         curl -s -X POST "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records" \
             -H "Authorization: Bearer $cf_token" \
             -H "Content-Type: application/json" \
@@ -216,7 +212,7 @@ fi
 EOF
     chmod +x "$CONFIG_DIR/update-ddns.sh"
     
-    # 添加定时任务 (每5分钟检查一次)
+    # 添加定时任务 (�?分钟检查一�?
     (crontab -l 2>/dev/null | grep -v "update-ddns"; echo "*/5 * * * * $CONFIG_DIR/update-ddns.sh >/dev/null 2>&1") | crontab -
     
     DDNS_DOMAIN="$FULL_DOMAIN"
@@ -224,7 +220,7 @@ EOF
     log "DDNS 配置完成!"
     log "域名: $FULL_DOMAIN"
     log "当前IP: $PUBLIC_IP"
-    log "已添加自动更新定时任务 (每5分钟)"
+    log "已添加自动更新定时任�?(�?分钟)"
     
     echo ""
     read -rp "按回车键继续..."
@@ -235,11 +231,11 @@ setup_duckdns() {
     echo ""
     info "DuckDNS 配置"
     echo "----------------------------------------"
-    read -rp "请输入 DuckDNS Token: " duck_token
+    read -rp "请输�?DuckDNS Token: " duck_token
     read -rp "请输入子域名 (例如: myvps): " duck_domain
     
     if [[ -z "$duck_token" || -z "$duck_domain" ]]; then
-        error "Token 和域名不能为空"
+        error "Token 和域名不能为�?
     fi
     
     FULL_DOMAIN="${duck_domain}.duckdns.org"
@@ -279,8 +275,8 @@ setup_noip() {
     echo ""
     info "No-IP 配置"
     echo "----------------------------------------"
-    read -rp "请输入 No-IP 用户名: " noip_user
-    read -rsp "请输入 No-IP 密码: " noip_pass
+    read -rp "请输�?No-IP 用户�? " noip_user
+    read -rsp "请输�?No-IP 密码: " noip_pass
     echo ""
     read -rp "请输入主机名 (例如: myvps.ddns.net): " noip_host
     
@@ -325,24 +321,24 @@ EOF
 setup_warp() {
     clear
     echo -e "${CYAN}========================================${NC}"
-    echo -e "${CYAN}         WARP 一键配置${NC}"
+    echo -e "${CYAN}         WARP 一键配�?{NC}"
     echo -e "${CYAN}========================================${NC}"
     echo ""
     
     if command -v warp-cli &>/dev/null; then
-        info "WARP 已安装"
+        info "WARP 已安�?
         echo ""
         echo "  1. 启动 WARP"
         echo "  2. 停止 WARP"
-        echo "  3. 查看状态"
+        echo "  3. 查看状�?
         echo "  4. 卸载 WARP"
-        echo "  5. 返回主菜单"
+        echo "  5. 返回主菜�?
         echo ""
         read -rp "请选择 [1-5]: " warp_choice
         
         case $warp_choice in
-            1) warp-cli connect; log "WARP 已启动" ;;
-            2) warp-cli disconnect; log "WARP 已停止" ;;
+            1) warp-cli connect; log "WARP 已启�? ;;
+            2) warp-cli disconnect; log "WARP 已停�? ;;
             3) warp-cli status ;;
             4) uninstall_warp ;;
             5) return ;;
@@ -353,7 +349,7 @@ setup_warp() {
     echo -e "${YELLOW}请选择安装方式:${NC}"
     echo "  1. 官方 Cloudflare WARP (推荐)"
     echo "  2. WireGuard 模式 (wgcf)"
-    echo "  3. 返回主菜单"
+    echo "  3. 返回主菜�?
     echo ""
     read -rp "请选择 [1-3]: " warp_install_choice
     
@@ -378,14 +374,13 @@ install_warp_official() {
         $PKG_MANAGER install -y cloudflare-warp
     fi
     
-    # 注册并连接
-    warp-cli registration new
+    # 注册并连�?    warp-cli registration new
     warp-cli connect
     
-    # 设置模式为WARP+ (可选)
+    # 设置模式为WARP+ (可�?
     warp-cli set-mode warp
     
-    log "WARP 安装并启动成功!"
+    log "WARP 安装并启动成�?"
     warp-cli status
     
     echo ""
@@ -436,7 +431,7 @@ uninstall_warp() {
         $PKG_MANAGER remove -y cloudflare-warp
     fi
     
-    log "WARP 已卸载"
+    log "WARP 已卸�?
     echo ""
     read -rp "按回车键继续..."
 }
@@ -463,7 +458,7 @@ install_xray() {
 install_vless() {
     clear
     echo -e "${CYAN}========================================${NC}"
-    echo -e "${CYAN}         Vless 一键安装${NC}"
+    echo -e "${CYAN}         Vless 一键安�?{NC}"
     echo -e "${CYAN}========================================${NC}"
     echo ""
     
@@ -471,14 +466,14 @@ install_vless() {
     if [[ -f "$CONFIG_DIR/ddns.conf" ]]; then
         source "$CONFIG_DIR/ddns.conf"
         echo -e "${GREEN}检测到已配置的DDNS域名: $FULL_DOMAIN${NC}"
-        read -rp "是否使用此域名? [Y/n]: " use_existing
+        read -rp "是否使用此域�? [Y/n]: " use_existing
         if [[ ! "$use_existing" =~ ^[Nn]$ ]]; then
             DDNS_DOMAIN="$FULL_DOMAIN"
         else
-            read -rp "请输入您的域名: " DDNS_DOMAIN
+            read -rp "请输入您的域�? " DDNS_DOMAIN
         fi
     else
-        read -rp "请输入您的域名 (或先配置DDNS): " DDNS_DOMAIN
+        read -rp "请输入您的域�?(或先配置DDNS): " DDNS_DOMAIN
     fi
     
     if [[ -z "$DDNS_DOMAIN" ]]; then
@@ -577,7 +572,7 @@ install_vless() {
 }
 EOF
     
-    # 创建TLS+WS备用配置 (更兼容)
+    # 创建TLS+WS备用配置 (更兼�?
     mkdir -p /usr/local/etc/xray
     
     # 重启Xray
@@ -604,8 +599,7 @@ EOF
     
     echo "$VLESS_LINK" > "$CONFIG_DIR/vless-link.txt"
     
-    # 生成二维码
-    if command -v qrencode &>/dev/null; then
+    # 生成二维�?    if command -v qrencode &>/dev/null; then
         qrencode -t ANSIUTF8 "$VLESS_LINK"
         qrencode -o "$CONFIG_DIR/vless-qr.png" "$VLESS_LINK"
     fi
@@ -625,7 +619,7 @@ EOF
     echo ""
     
     if [[ -f "$CONFIG_DIR/vless-qr.png" ]]; then
-        echo -e "${CYAN}二维码已保存至: $CONFIG_DIR/vless-qr.png${NC}"
+        echo -e "${CYAN}二维码已保存�? $CONFIG_DIR/vless-qr.png${NC}"
     fi
     
     echo ""
@@ -639,22 +633,21 @@ EOF
 install_hysteria2() {
     clear
     echo -e "${CYAN}========================================${NC}"
-    echo -e "${CYAN}         Hysteria2 一键安装${NC}"
+    echo -e "${CYAN}         Hysteria2 一键安�?{NC}"
     echo -e "${CYAN}========================================${NC}"
     echo ""
     
-    # 检查域名
-    if [[ -f "$CONFIG_DIR/ddns.conf" ]]; then
+    # 检查域�?    if [[ -f "$CONFIG_DIR/ddns.conf" ]]; then
         source "$CONFIG_DIR/ddns.conf"
         echo -e "${GREEN}检测到已配置的DDNS域名: $FULL_DOMAIN${NC}"
-        read -rp "是否使用此域名? [Y/n]: " use_existing
+        read -rp "是否使用此域�? [Y/n]: " use_existing
         if [[ ! "$use_existing" =~ ^[Nn]$ ]]; then
             DDNS_DOMAIN="$FULL_DOMAIN"
         else
-            read -rp "请输入您的域名: " DDNS_DOMAIN
+            read -rp "请输入您的域�? " DDNS_DOMAIN
         fi
     else
-        read -rp "请输入您的域名: " DDNS_DOMAIN
+        read -rp "请输入您的域�? " DDNS_DOMAIN
     fi
     
     if [[ -z "$DDNS_DOMAIN" ]]; then
@@ -669,7 +662,7 @@ install_hysteria2() {
     local PORT=$(shuf -i 10000-65000 -n 1)
     local PASSWORD=$(openssl rand -base64 16)
     
-    # 生成自签名证书 (Hysteria2推荐)
+    # 生成自签名证�?(Hysteria2推荐)
     mkdir -p /etc/hysteria
     openssl ecparam -genkey -name prime256v1 -out /etc/hysteria/server.key
     openssl req -new -x509 -days 3650 -key /etc/hysteria/server.key \
@@ -713,8 +706,7 @@ EOF
 端口: $PORT
 密码: $PASSWORD
 传输协议: udp
-TLS: 自签名证书
-SNI: $DDNS_DOMAIN
+TLS: 自签名证�?SNI: $DDNS_DOMAIN
 =======================================
 EOF
     
@@ -739,7 +731,7 @@ EOF
     echo ""
     
     if [[ -f "$CONFIG_DIR/hysteria2-qr.png" ]]; then
-        echo -e "${CYAN}二维码已保存至: $CONFIG_DIR/hysteria2-qr.png${NC}"
+        echo -e "${CYAN}二维码已保存�? $CONFIG_DIR/hysteria2-qr.png${NC}"
     fi
     
     echo ""
@@ -753,7 +745,7 @@ EOF
 install_shadowsocks() {
     clear
     echo -e "${CYAN}========================================${NC}"
-    echo -e "${CYAN}       Shadowsocks 一键安装${NC}"
+    echo -e "${CYAN}       Shadowsocks 一键安�?{NC}"
     echo -e "${CYAN}========================================${NC}"
     echo ""
     
@@ -826,22 +818,21 @@ EOF
 install_vmess() {
     clear
     echo -e "${CYAN}========================================${NC}"
-    echo -e "${CYAN}         VMess 一键安装${NC}"
+    echo -e "${CYAN}         VMess 一键安�?{NC}"
     echo -e "${CYAN}========================================${NC}"
     echo ""
     
-    # 检查域名
-    if [[ -f "$CONFIG_DIR/ddns.conf" ]]; then
+    # 检查域�?    if [[ -f "$CONFIG_DIR/ddns.conf" ]]; then
         source "$CONFIG_DIR/ddns.conf"
         echo -e "${GREEN}检测到已配置的DDNS域名: $FULL_DOMAIN${NC}"
-        read -rp "是否使用此域名? [Y/n]: " use_existing
+        read -rp "是否使用此域�? [Y/n]: " use_existing
         if [[ ! "$use_existing" =~ ^[Nn]$ ]]; then
             DDNS_DOMAIN="$FULL_DOMAIN"
         else
-            read -rp "请输入您的域名: " DDNS_DOMAIN
+            read -rp "请输入您的域�? " DDNS_DOMAIN
         fi
     else
-        read -rp "请输入您的域名 (或先配置DDNS): " DDNS_DOMAIN
+        read -rp "请输入您的域�?(或先配置DDNS): " DDNS_DOMAIN
     fi
     
     if [[ -z "$DDNS_DOMAIN" ]]; then
@@ -911,8 +902,7 @@ install_vmess() {
 }
 EOF
     
-    # 使用单独的配置文件运行
-    cp /usr/local/etc/xray/vmess.json /usr/local/etc/xray/config.json
+    # 使用单独的配置文件运�?    cp /usr/local/etc/xray/vmess.json /usr/local/etc/xray/config.json
     systemctl restart xray
     
     cat > "$CONFIG_DIR/vmess-info.txt" <<EOF
@@ -923,8 +913,7 @@ UUID: $UUID
 额外ID: 0
 传输协议: ws
 WebSocket路径: $WS_PATH
-TLS: 开启
-====================================
+TLS: 开�?====================================
 EOF
     
     # 生成VMess链接
@@ -958,22 +947,21 @@ EOF
 install_trojan() {
     clear
     echo -e "${CYAN}========================================${NC}"
-    echo -e "${CYAN}         Trojan 一键安装${NC}"
+    echo -e "${CYAN}         Trojan 一键安�?{NC}"
     echo -e "${CYAN}========================================${NC}"
     echo ""
     
-    # 检查域名
-    if [[ -f "$CONFIG_DIR/ddns.conf" ]]; then
+    # 检查域�?    if [[ -f "$CONFIG_DIR/ddns.conf" ]]; then
         source "$CONFIG_DIR/ddns.conf"
         echo -e "${GREEN}检测到已配置的DDNS域名: $FULL_DOMAIN${NC}"
-        read -rp "是否使用此域名? [Y/n]: " use_existing
+        read -rp "是否使用此域�? [Y/n]: " use_existing
         if [[ ! "$use_existing" =~ ^[Nn]$ ]]; then
             DDNS_DOMAIN="$FULL_DOMAIN"
         else
-            read -rp "请输入您的域名: " DDNS_DOMAIN
+            read -rp "请输入您的域�? " DDNS_DOMAIN
         fi
     else
-        read -rp "请输入您的域名 (或先配置DDNS): " DDNS_DOMAIN
+        read -rp "请输入您的域�?(或先配置DDNS): " DDNS_DOMAIN
     fi
     
     if [[ -z "$DDNS_DOMAIN" ]]; then
@@ -982,7 +970,7 @@ install_trojan() {
     
     log "正在安装 Trojan..."
     
-    # 安装Trojan-go (推荐，支持更多特性)
+    # 安装Trojan-go (推荐，支持更多特�?
     local TROJAN_VERSION=$(curl -s https://api.github.com/repos/p4gefau1t/trojan-go/releases/latest | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')
     wget -qO /tmp/trojan-go.tar.gz "https://github.com/p4gefau1t/trojan-go/releases/download/${TROJAN_VERSION}/trojan-go-linux-amd64.zip"
     
@@ -1059,8 +1047,7 @@ EOF
 密码: $PASSWORD
 传输协议: websocket
 WebSocket路径: $WS_PATH
-TLS: 开启
-SNI: $DDNS_DOMAIN
+TLS: 开�?SNI: $DDNS_DOMAIN
 =====================================
 EOF
     
@@ -1094,12 +1081,12 @@ EOF
 view_config() {
     clear
     echo -e "${CYAN}========================================${NC}"
-    echo -e "${CYAN}         查看已安装服务配置${NC}"
+    echo -e "${CYAN}         查看已安装服务配�?{NC}"
     echo -e "${CYAN}========================================${NC}"
     echo ""
     
     if [[ -f "$CONFIG_DIR/vless-info.txt" ]]; then
-        echo -e "${GREEN}【Vless 配置】${NC}"
+        echo -e "${GREEN}【Vless 配置�?{NC}"
         cat "$CONFIG_DIR/vless-info.txt"
         echo ""
         echo -e "${CYAN}分享链接:${NC}"
@@ -1109,7 +1096,7 @@ view_config() {
     fi
     
     if [[ -f "$CONFIG_DIR/hysteria2-info.txt" ]]; then
-        echo -e "${GREEN}【Hysteria2 配置】${NC}"
+        echo -e "${GREEN}【Hysteria2 配置�?{NC}"
         cat "$CONFIG_DIR/hysteria2-info.txt"
         echo ""
         echo -e "${CYAN}分享链接:${NC}"
@@ -1119,7 +1106,7 @@ view_config() {
     fi
     
     if [[ -f "$CONFIG_DIR/ss-info.txt" ]]; then
-        echo -e "${GREEN}【Shadowsocks 配置】${NC}"
+        echo -e "${GREEN}【Shadowsocks 配置�?{NC}"
         cat "$CONFIG_DIR/ss-info.txt"
         echo ""
         echo -e "${CYAN}分享链接:${NC}"
@@ -1129,7 +1116,7 @@ view_config() {
     fi
     
     if [[ -f "$CONFIG_DIR/vmess-info.txt" ]]; then
-        echo -e "${GREEN}【VMess 配置】${NC}"
+        echo -e "${GREEN}【VMess 配置�?{NC}"
         cat "$CONFIG_DIR/vmess-info.txt"
         echo ""
         echo -e "${CYAN}分享链接:${NC}"
@@ -1139,7 +1126,7 @@ view_config() {
     fi
     
     if [[ -f "$CONFIG_DIR/trojan-info.txt" ]]; then
-        echo -e "${GREEN}【Trojan 配置】${NC}"
+        echo -e "${GREEN}【Trojan 配置�?{NC}"
         cat "$CONFIG_DIR/trojan-info.txt"
         echo ""
         echo -e "${CYAN}分享链接:${NC}"
@@ -1149,7 +1136,7 @@ view_config() {
     fi
     
     if [[ -f "$CONFIG_DIR/ddns.conf" ]]; then
-        echo -e "${GREEN}【DDNS 配置】${NC}"
+        echo -e "${GREEN}【DDNS 配置�?{NC}"
         cat "$CONFIG_DIR/ddns.conf"
         echo ""
     fi
@@ -1171,8 +1158,8 @@ uninstall_service() {
     echo "  3. 卸载 Shadowsocks"
     echo "  4. 卸载 VMess"
     echo "  5. 卸载 Trojan"
-    echo "  6. 卸载所有服务"
-    echo "  7. 返回主菜单"
+    echo "  6. 卸载所有服�?
+    echo "  7. 返回主菜�?
     echo ""
     read -rp "请选择 [1-7]: " uninstall_choice
     
@@ -1182,7 +1169,7 @@ uninstall_service() {
             systemctl disable xray 2>/dev/null || true
             rm -f /usr/local/etc/xray/config.json
             rm -f "$CONFIG_DIR"/vless-*
-            log "Vless 已卸载"
+            log "Vless 已卸�?
             ;;
         2)
             systemctl stop hysteria-server 2>/dev/null || true
@@ -1190,20 +1177,20 @@ uninstall_service() {
             rm -rf /etc/hysteria
             rm -f /usr/local/bin/hysteria
             rm -f "$CONFIG_DIR"/hysteria2-*
-            log "Hysteria2 已卸载"
+            log "Hysteria2 已卸�?
             ;;
         3)
             systemctl stop shadowsocks-libev 2>/dev/null || true
             systemctl disable shadowsocks-libev 2>/dev/null || true
             rm -f "$CONFIG_DIR"/ss-*
-            log "Shadowsocks 已卸载"
+            log "Shadowsocks 已卸�?
             ;;
         4)
             systemctl stop xray 2>/dev/null || true
             systemctl disable xray 2>/dev/null || true
             rm -f /usr/local/etc/xray/vmess.json
             rm -f "$CONFIG_DIR"/vmess-*
-            log "VMess 已卸载"
+            log "VMess 已卸�?
             ;;
         5)
             systemctl stop trojan-go 2>/dev/null || true
@@ -1211,7 +1198,7 @@ uninstall_service() {
             rm -rf /etc/trojan
             rm -f /usr/local/bin/trojan-go
             rm -f "$CONFIG_DIR"/trojan-*
-            log "Trojan 已卸载"
+            log "Trojan 已卸�?
             ;;
         6)
             systemctl stop xray hysteria-server shadowsocks-libev trojan-go 2>/dev/null || true
@@ -1228,30 +1215,30 @@ uninstall_service() {
     read -rp "按回车键继续..."
 }
 
-# ==================== 主菜单 ====================
+# ==================== 主菜�?====================
 
 show_menu() {
     clear
     echo -e "${CYAN}╔══════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║${NC}           ${GREEN}VPS Toolbox - 多功能一键部署工具${NC}                  ${CYAN}║${NC}"
+    echo -e "${CYAN}�?{NC}           ${GREEN}VPS Toolbox - 多功能一键部署工�?{NC}                  ${CYAN}�?{NC}"
     echo -e "${CYAN}╠══════════════════════════════════════════════════════════════╣${NC}"
-    echo -e "${CYAN}║${NC}                                                              ${CYAN}║${NC}"
-    echo -e "${CYAN}║${NC}  ${YELLOW}【DDNS & 网络】${NC}                                            ${CYAN}║${NC}"
-    echo -e "${CYAN}║${NC}   1. DDNS 域名申请与管理 (自动续签)                          ${CYAN}║${NC}"
-    echo -e "${CYAN}║${NC}   2. WARP 一键配置                                           ${CYAN}║${NC}"
-    echo -e "${CYAN}║${NC}                                                              ${CYAN}║${NC}"
-    echo -e "${CYAN}║${NC}  ${YELLOW}【代理协议】${NC}                                               ${CYAN}║${NC}"
-    echo -e "${CYAN}║${NC}   3. 安装 Vless + Reality (推荐)                             ${CYAN}║${NC}"
-    echo -e "${CYAN}║${NC}   4. 安装 Hysteria2 (推荐)                                   ${CYAN}║${NC}"
-    echo -e "${CYAN}║${NC}   5. 安装 Shadowsocks                                        ${CYAN}║${NC}"
-    echo -e "${CYAN}║${NC}   6. 安装 VMess + WebSocket                                  ${CYAN}║${NC}"
-    echo -e "${CYAN}║${NC}   7. 安装 Trojan + WebSocket                                 ${CYAN}║${NC}"
-    echo -e "${CYAN}║${NC}                                                              ${CYAN}║${NC}"
-    echo -e "${CYAN}║${NC}  ${YELLOW}【管理】${NC}                                                   ${CYAN}║${NC}"
-    echo -e "${CYAN}║${NC}   8. 查看所有配置                                            ${CYAN}║${NC}"
-    echo -e "${CYAN}║${NC}   9. 卸载服务                                                ${CYAN}║${NC}"
-    echo -e "${CYAN}║${NC}   0. 退出脚本                                                ${CYAN}║${NC}"
-    echo -e "${CYAN}║${NC}                                                              ${CYAN}║${NC}"
+    echo -e "${CYAN}�?{NC}                                                              ${CYAN}�?{NC}"
+    echo -e "${CYAN}�?{NC}  ${YELLOW}【DDNS & 网络�?{NC}                                            ${CYAN}�?{NC}"
+    echo -e "${CYAN}�?{NC}   1. DDNS 域名申请与管�?(自动续签)                          ${CYAN}�?{NC}"
+    echo -e "${CYAN}�?{NC}   2. WARP 一键配�?                                          ${CYAN}�?{NC}"
+    echo -e "${CYAN}�?{NC}                                                              ${CYAN}�?{NC}"
+    echo -e "${CYAN}�?{NC}  ${YELLOW}【代理协议�?{NC}                                               ${CYAN}�?{NC}"
+    echo -e "${CYAN}�?{NC}   3. 安装 Vless + Reality (推荐)                             ${CYAN}�?{NC}"
+    echo -e "${CYAN}�?{NC}   4. 安装 Hysteria2 (推荐)                                   ${CYAN}�?{NC}"
+    echo -e "${CYAN}�?{NC}   5. 安装 Shadowsocks                                        ${CYAN}�?{NC}"
+    echo -e "${CYAN}�?{NC}   6. 安装 VMess + WebSocket                                  ${CYAN}�?{NC}"
+    echo -e "${CYAN}�?{NC}   7. 安装 Trojan + WebSocket                                 ${CYAN}�?{NC}"
+    echo -e "${CYAN}�?{NC}                                                              ${CYAN}�?{NC}"
+    echo -e "${CYAN}�?{NC}  ${YELLOW}【管理�?{NC}                                                   ${CYAN}�?{NC}"
+    echo -e "${CYAN}�?{NC}   8. 查看所有配�?                                           ${CYAN}�?{NC}"
+    echo -e "${CYAN}�?{NC}   9. 卸载服务                                                ${CYAN}�?{NC}"
+    echo -e "${CYAN}�?{NC}   0. 退出脚�?                                               ${CYAN}�?{NC}"
+    echo -e "${CYAN}�?{NC}                                                              ${CYAN}�?{NC}"
     echo -e "${CYAN}╚══════════════════════════════════════════════════════════════╝${NC}"
     echo ""
 }
@@ -1276,7 +1263,7 @@ main() {
             8) view_config ;;
             9) uninstall_service ;;
             0)
-                echo -e "${GREEN}感谢使用 VPS Toolbox，再见!${NC}"
+                echo -e "${GREEN}感谢使用 VPS Toolbox，再�?${NC}"
                 exit 0
                 ;;
             *)
@@ -1287,5 +1274,4 @@ main() {
     done
 }
 
-# 运行主函数
-main "$@"
+# 运行主函�?main "$@"
