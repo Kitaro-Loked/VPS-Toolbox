@@ -34,16 +34,30 @@
 
 ## 一键安装
 
+### 中文版 (Chinese)
+
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/Kitaro-Loked/VPS-Toolbox/master/install.sh)
+curl -fsSL -o install.sh https://raw.githubusercontent.com/Kitaro-Loked/VPS-Toolbox/master/install.sh
+bash install.sh
 ```
 
-或者手动下载运行：
+### 英文版 (English)
 
 ```bash
+curl -fsSL -o install_en.sh https://raw.githubusercontent.com/Kitaro-Loked/VPS-Toolbox/master/install_en.sh
+bash install_en.sh
+```
+
+或者使用 `wget`：
+
+```bash
+# 中文版
 wget https://raw.githubusercontent.com/Kitaro-Loked/VPS-Toolbox/master/install.sh
-chmod +x install.sh
-./install.sh
+bash install.sh
+
+# 英文版
+wget https://raw.githubusercontent.com/Kitaro-Loked/VPS-Toolbox/master/install_en.sh
+bash install_en.sh
 ```
 
 ## 使用指南
