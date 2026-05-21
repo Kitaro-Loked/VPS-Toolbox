@@ -748,6 +748,7 @@ install_vless() {
     fi
     
     export PATH="$HOME/.acme.sh:$PATH"
+    ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt >/dev/null 2>&1 || true
     
     ~/.acme.sh/acme.sh --issue -d "$DOMAIN" --standalone --force --server letsencrypt
     ~/.acme.sh/acme.sh --install-cert -d "$DOMAIN" \
@@ -1064,6 +1065,7 @@ install_vmess() {
     fi
     
     export PATH="$HOME/.acme.sh:$PATH"
+    ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt >/dev/null 2>&1 || true
     ~/.acme.sh/acme.sh --issue -d "$DOMAIN" --standalone --force --server letsencrypt
     ~/.acme.sh/acme.sh --install-cert -d "$DOMAIN" \
         --key-file /usr/local/etc/xray/vmess-private.key \
@@ -1189,6 +1191,7 @@ install_trojan() {
     fi
     
     export PATH="$HOME/.acme.sh:$PATH"
+    ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt >/dev/null 2>&1 || true
     ~/.acme.sh/acme.sh --issue -d "$DOMAIN" --standalone --force --server letsencrypt
     ~/.acme.sh/acme.sh --install-cert -d "$DOMAIN" \
         --key-file /etc/trojan/private.key \
