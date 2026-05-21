@@ -749,7 +749,7 @@ install_vless() {
     
     export PATH="$HOME/.acme.sh:$PATH"
     
-    ~/.acme.sh/acme.sh --issue -d "$DOMAIN" --standalone --force
+    ~/.acme.sh/acme.sh --issue -d "$DOMAIN" --standalone --force --server letsencrypt
     ~/.acme.sh/acme.sh --install-cert -d "$DOMAIN" \
         --key-file /usr/local/etc/xray/private.key \
         --fullchain-file /usr/local/etc/xray/cert.crt
@@ -1064,7 +1064,7 @@ install_vmess() {
     fi
     
     export PATH="$HOME/.acme.sh:$PATH"
-    ~/.acme.sh/acme.sh --issue -d "$DOMAIN" --standalone --force
+    ~/.acme.sh/acme.sh --issue -d "$DOMAIN" --standalone --force --server letsencrypt
     ~/.acme.sh/acme.sh --install-cert -d "$DOMAIN" \
         --key-file /usr/local/etc/xray/vmess-private.key \
         --fullchain-file /usr/local/etc/xray/vmess-cert.crt
@@ -1189,7 +1189,7 @@ install_trojan() {
     fi
     
     export PATH="$HOME/.acme.sh:$PATH"
-    ~/.acme.sh/acme.sh --issue -d "$DOMAIN" --standalone --force
+    ~/.acme.sh/acme.sh --issue -d "$DOMAIN" --standalone --force --server letsencrypt
     ~/.acme.sh/acme.sh --install-cert -d "$DOMAIN" \
         --key-file /etc/trojan/private.key \
         --fullchain-file /etc/trojan/cert.crt
