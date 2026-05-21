@@ -34,23 +34,23 @@
 
 ## 一键安装
 
-`ash
+```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/Kitaro-Loked/VPS-Toolbox/master/install.sh)
-`
+```
 
 或者手动下载运行：
 
-`ash
+```bash
 wget https://raw.githubusercontent.com/Kitaro-Loked/VPS-Toolbox/master/install.sh
 chmod +x install.sh
 ./install.sh
-`
+```
 
 ## 使用指南
 
 运行脚本后会显示交互式中文菜单，按提示选择即可：
 
-`
+```
 1. DDNS 域名申请与管理 (自动续签)
 2. WARP 一键配置
 3. 安装 Vless + Reality (推荐)
@@ -61,7 +61,7 @@ chmod +x install.sh
 8. 查看所有配置
 9. 卸载服务
 0. 退出脚本
-`
+```
 
 ### DDNS 域名配置
 
@@ -94,7 +94,7 @@ chmod +x install.sh
 
 ## 文件结构
 
-`
+```
 /etc/vps-toolbox/
 ├── ddns.conf           # DDNS 配置
 ├── update-ddns.sh      # DDNS 自动更新脚本
@@ -113,7 +113,7 @@ chmod +x install.sh
 ├── trojan-info.txt     # Trojan 配置信息
 ├── trojan-link.txt     # Trojan 分享链接
 └── trojan-qr.png       # Trojan 二维码
-`
+```
 
 ## 自动续签机制
 
