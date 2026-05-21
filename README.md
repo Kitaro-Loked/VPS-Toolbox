@@ -8,7 +8,7 @@
 
 
 
-[![GitHub stars](https://img.shields.io/github/stars/yourusername/vps-toolbox?style=flat-square)](https://github.com/yourusername/vps-toolbox)
+[![GitHub stars](https://img.shields.io/github/stars/yourusername/vps-toolbox?style=flat-square)](https://github.com/Kitaro-Loked/VPS-Toolbox)
 
 [![License](https://img.shields.io/github/license/yourusername/vps-toolbox?style=flat-square)](LICENSE)
 
@@ -92,7 +92,7 @@
 
 ```bash
 
-bash <(curl -fsSL https://raw.githubusercontent.com/yourusername/vps-toolbox/main/install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/Kitaro-Loked/VPS-Toolbox/master/install.sh)
 
 ```
 
@@ -106,7 +106,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/yourusername/vps-toolbox/mai
 
 # 下载脚本
 
-wget https://raw.githubusercontent.com/yourusername/vps-toolbox/main/install.sh
+wget https://raw.githubusercontent.com/Kitaro-Loked/VPS-Toolbox/master/install.sh
 
 
 
