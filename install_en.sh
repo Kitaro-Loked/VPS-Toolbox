@@ -4,7 +4,7 @@
 # Features: DDNS/WARP/Vless/Hysteria2/SS/VMess/Trojan
 # Author: Kitaro-Loked
 # Repo: https://github.com/Kitaro-Loked/VPS-Toolbox
-# Version: 2.0.0
+# Version: 2.1.2
 # ============================================================
 
 set -e
@@ -542,7 +542,7 @@ get_domain() {
     if [[ -f "$CONFIG_DIR/ddns.conf" ]]; then
         source "$CONFIG_DIR/ddns.conf"
         if [[ -n "$DDNS_DOMAIN" ]]; then
-            echo -e "${GREEN}Detected configured domain: $DDNS_DOMAIN${NC}"
+            echo -e "${GREEN}Detected configured domain: $DDNS_DOMAIN${NC}" >&2
             read -rp "Use this domain? [Y/n]: " use_existing
             if [[ ! "$use_existing" =~ ^[Nn]$ ]]; then
                 echo "$DDNS_DOMAIN"
@@ -1343,6 +1343,90 @@ view_config() {
     read -rp "Press Enter to continue..."
 }
 
+
+# ==================== Subscription Link ====================
+
+generate_subscription() {
+    local SUB_CONTENT=""
+    
+    if [[ -f "$CONFIG_DIR/vless-link.txt" ]]; then
+        SUB_CONTENT="${SUB_CONTENT}$(cat "$CONFIG_DIR/vless-link.txt")\n"
+    fi
+    
+    if [[ -f "$CONFIG_DIR/hysteria2-link.txt" ]]; then
+        SUB_CONTENT="${SUB_CONTENT}$(cat "$CONFIG_DIR/hysteria2-link.txt")\n"
+    fi
+    
+    if [[ -f "$CONFIG_DIR/ss-link.txt" ]]; then
+        SUB_CONTENT="${SUB_CONTENT}$(cat "$CONFIG_DIR/ss-link.txt")\n"
+    fi
+    
+    if [[ -f "$CONFIG_DIR/vmess-link.txt" ]]; then
+        SUB_CONTENT="${SUB_CONTENT}$(cat "$CONFIG_DIR/vmess-link.txt")\n"
+    fi
+    
+    if [[ -f "$CONFIG_DIR/trojan-link.txt" ]]; then
+        SUB_CONTENT="${SUB_CONTENT}$(cat "$CONFIG_DIR/trojan-link.txt")\n"
+    fi
+    
+    if [[ -z "$SUB_CONTENT" ]]; then
+        echo ""
+        return 1
+    fi
+    
+    SUB_CONTENT=$(echo -e "$SUB_CONTENT" | sed '$d')
+    echo -n "$SUB_CONTENT" | base64 -w 0
+}
+
+show_subscription() {
+    clear
+    echo ""
+    echo -e "${CYAN}============================================================${NC}"
+    echo -e "${CYAN}                      Subscription Link${NC}"
+    echo -e "${CYAN}============================================================${NC}"
+    echo ""
+    
+    local SUB_B64=$(generate_subscription)
+    
+    if [[ -z "$SUB_B64" ]]; then
+        echo -e "${YELLOW}No proxy services installed yet. Cannot generate subscription link.${NC}"
+        echo ""
+        read -rp "Press Enter to continue..."
+        return
+    fi
+    
+    echo "$SUB_B64" | base64 -d | base64 -w 0 > "$CONFIG_DIR/subscription.txt"
+    
+    local SERVER_IP=$(curl -s -4 https://api.ipify.org)
+    
+    echo -e "${GREEN}Subscription Link (Base64):${NC}"
+    echo ""
+    echo "$SUB_B64"
+    echo ""
+    echo -e "${CYAN}----------------------------------------${NC}"
+    echo ""
+    echo -e "${GREEN}Online Subscription URL:${NC}"
+    echo ""
+    echo "  http://${SERVER_IP}:8080/sub"
+    echo ""
+    echo -e "${YELLOW}Tip: Paste the Base64 content into clients that support subscription links${NC}"
+    echo -e "${YELLOW}Or configure Nginx/Caddy to serve $CONFIG_DIR/subscription.txt as a static file${NC}"
+    echo ""
+    
+    if command -v python3 &>/dev/null; then
+        if ! ss -tlnp | grep -q ':8080'; then
+            echo -e "${GREEN}Starting temporary subscription service (port 8080)...${NC}"
+            mkdir -p /tmp/vps-sub
+            echo "$SUB_B64" | base64 -d | base64 -w 0 > /tmp/vps-sub/sub
+            nohup python3 -m http.server 8080 --directory /tmp/vps-sub >/dev/null 2>&1 &
+            echo -e "${GREEN}Subscription service started. Access via http://${SERVER_IP}:8080/sub${NC}"
+            echo ""
+        fi
+    fi
+    
+    read -rp "Press Enter to continue..."
+}
+
 # ==================== Uninstall Service ====================
 
 uninstall_service() {
@@ -1468,7 +1552,8 @@ main() {
             6) install_vmess ;;
             7) install_trojan ;;
             8) view_config ;;
-            9) uninstall_service ;;
+            9) show_subscription ;;
+            10) uninstall_service ;;
             0)
                 echo -e "${GREEN}Thanks for using VPS Toolbox, goodbye!${NC}"
                 exit 0
