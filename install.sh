@@ -6,7 +6,7 @@ sed -i "s/\r$//" "$0" 2>/dev/null || true
 # 功能: DDNS/WARP/Vless/Hysteria2/SS/VMess/Trojan
 # 作者: Kitaro-Loked
 # 仓库: https://github.com/Kitaro-Loked/VPS-Toolbox
-# 版本: 2.3.0
+# 版本: 2.4.0
 # ============================================================
 
 set -e
@@ -2163,7 +2163,7 @@ uninstall_service() {
 show_banner() {
     echo ""
     echo -e "${CYAN}============================================================${NC}"
-    echo -e "${GREEN}           VPS Toolbox - 多功能一键部署工具 v2.3.0${NC}"
+    echo -e "${GREEN}           VPS Toolbox - 多功能一键部署工具 v2.4.0${NC}"
     echo -e "${CYAN}============================================================${NC}"
     echo -e "  ${YELLOW}作者${NC}: Kitaro-Loked"
     echo -e "  ${YELLOW}仓库${NC}: https://github.com/Kitaro-Loked/VPS-Toolbox"
