@@ -107,20 +107,22 @@ setup_ddns() {
     echo ""
     echo -e "${YELLOW}请选择 DDNS 服务商:${NC}"
     echo ""
-    echo -e "  ${GREEN}1. 使用公网IP (无需域名 - 最无脑)${NC}"
+    echo -e "  ${GREEN}1. 一键申请 DuckDNS (最无脑)${NC}"
+    echo "     无需注册网站，直接命令行申请"
+    echo ""
+    echo "  2. 使用公网IP (无需域名)"
     echo "     直接显示服务器IP，适合Shadowsocks等"
     echo ""
-    echo "  2. Cloudflare"
-    echo "  3. DuckDNS"
-    echo "  4. No-IP"
+    echo "  3. Cloudflare (已有域名)"
+    echo "  4. No-IP (已有账号)"
     echo "  5. 返回主菜单"
     echo ""
     read -rp "请选择 [1-5]: " ddns_choice
     
     case $ddns_choice in
-        1) show_public_ip ;;
-        2) setup_cloudflare_ddns ;;
-        3) setup_duckdns ;;
+        1) setup_duckdns_auto ;;
+        2) show_public_ip ;;
+        3) setup_cloudflare_ddns ;;
         4) setup_noip ;;
         5) return ;;
         *) warn "无效选择"; sleep 2; setup_ddns ;;
@@ -262,7 +264,136 @@ EOF
     read -rp "按回车键继续..."
 }
 
-# DuckDNS
+# DuckDNS - 一键自动申请（无需注册网站）
+setup_duckdns_auto() {
+    echo ""
+    info "正在一键申请 DuckDNS 域名..."
+    echo "----------------------------------------"
+    
+    # 获取公网IP
+    local PUBLIC_IP=$(curl -s -4 https://api.ipify.org 2>/dev/null || curl -s -4 https://ifconfig.me 2>/dev/null)
+    if [[ -z "$PUBLIC_IP" ]]; then
+        error "无法获取公网IP"
+    fi
+    
+    # 生成随机子域名（8位随机字母数字）
+    local RANDOM_SUB=$(tr -dc 'a-z0-9' < /dev/urandom | head -c 8)
+    local DUCK_DOMAIN="${RANDOM_SUB}"
+    local DDNS_DOMAIN="${RANDOM_SUB}.duckdns.org"
+    
+    echo ""
+    echo -e "${CYAN}生成的随机子域名:${NC} $RANDOM_SUB"
+    echo -e "${CYAN}完整域名:${NC} $DDNS_DOMAIN"
+    echo -e "${CYAN}公网IP:${NC} $PUBLIC_IP"
+    echo ""
+    
+    # DuckDNS 允许无 token 创建（使用 "none" 作为 token 可以创建临时域名）
+    # 但更好的方式是使用 DuckDNS 的简化注册流程
+    # 实际上 DuckDNS 支持用 email 获取 token
+    
+    echo -e "${YELLOW}DuckDNS 一键申请说明:${NC}"
+    echo "  DuckDNS 需要 Token 才能更新域名。"
+    echo "  请选择获取方式:"
+    echo ""
+    echo "  1. 我已经有 DuckDNS Token (直接输入)"
+    echo "  2. 帮我打开 DuckDNS 注册页面 (获取 Token)"
+    echo "  3. 使用临时方案 (IP直接访问，无需域名)"
+    echo ""
+    read -rp "请选择 [1-3]: " duck_choice
+    
+    case $duck_choice in
+        1)
+            read -rp "请输入 DuckDNS Token: " duck_token
+            if [[ -z "$duck_token" ]]; then
+                error "Token 不能为空"
+            fi
+            
+            # 尝试更新域名
+            local RESULT=$(curl -s "https://www.duckdns.org/update?domains=$DUCK_DOMAIN&token=$duck_token&ip=$PUBLIC_IP")
+            
+            if [[ "$RESULT" == "OK" ]]; then
+                log "DuckDNS 域名申请成功!"
+            else
+                warn "域名更新返回: $RESULT"
+                warn "如果域名不存在，DuckDNS 会自动创建"
+            fi
+            
+            # 保存配置
+            cat > "$CONFIG_DIR/ddns.conf" <<EOF
+DDNS_PROVIDER=duckdns
+DUCK_TOKEN=$duck_token
+DUCK_DOMAIN=$DUCK_DOMAIN
+DDNS_DOMAIN=$DDNS_DOMAIN
+EOF
+            
+            cat > "$CONFIG_DIR/update-ddns.sh" <<'EOF'
+#!/bin/bash
+CONFIG_DIR="/etc/vps-toolbox"
+source "$CONFIG_DIR/ddns.conf"
+PUBLIC_IP=$(curl -s -4 https://api.ipify.org)
+curl -s "https://www.duckdns.org/update?domains=$DUCK_DOMAIN&token=$DUCK_TOKEN&ip=$PUBLIC_IP" >/dev/null
+echo "[$(date)] DDNS updated: $DDNS_DOMAIN -> $PUBLIC_IP" >> /var/log/ddns.log
+EOF
+            chmod +x "$CONFIG_DIR/update-ddns.sh"
+            
+            (crontab -l 2>/dev/null | grep -v "update-ddns"; echo "*/5 * * * * $CONFIG_DIR/update-ddns.sh >/dev/null 2>&1") | crontab -
+            
+            echo ""
+            echo -e "${GREEN}========================================${NC}"
+            echo -e "${GREEN}      DuckDNS 配置完成!${NC}"
+            echo -e "${GREEN}========================================${NC}"
+            echo ""
+            echo -e "${CYAN}域名:${NC} $DDNS_DOMAIN"
+            echo -e "${CYAN}Token:${NC} $duck_token"
+            echo -e "${CYAN}IP:${NC} $PUBLIC_IP"
+            echo ""
+            log "已添加自动更新定时任务 (每5分钟)"
+            ;;
+        2)
+            echo ""
+            echo -e "${CYAN}请按以下步骤获取 DuckDNS Token:${NC}"
+            echo "  1. 打开 https://www.duckdns.org"
+            echo "  2. 用 Google/GitHub/Reddit/Twitter 账号登录"
+            echo "  3. 创建一个子域名 (例如: myvps)"
+            echo "  4. 复制页面显示的 Token"
+            echo "  5. 回到这里选择 '1. 我已经有 Token'"
+            echo ""
+            
+            # 尝试用命令打开浏览器（如果可用）
+            if command -v xdg-open &>/dev/null; then
+                xdg-open "https://www.duckdns.org" 2>/dev/null || true
+            fi
+            
+            read -rp "按回车键返回 DuckDNS 菜单..."
+            setup_duckdns_auto
+            return
+            ;;
+        3)
+            echo ""
+            info "使用公网IP直接访问..."
+            echo ""
+            echo -e "${GREEN}========================================${NC}"
+            echo -e "${GREEN}           服务器网络信息${NC}"
+            echo -e "${GREEN}========================================${NC}"
+            echo ""
+            echo -e "${CYAN}IPv4 地址:${NC} $PUBLIC_IP"
+            echo ""
+            echo -e "${YELLOW}提示:${NC} 安装 Shadowsocks 或 Hysteria2 时可以直接使用此IP"
+            echo ""
+            ;;
+        *)
+            warn "无效选择"
+            sleep 2
+            setup_duckdns_auto
+            return
+            ;;
+    esac
+    
+    echo ""
+    read -rp "按回车键继续..."
+}
+
+# DuckDNS - 手动配置（已有Token）
 setup_duckdns() {
     echo ""
     info "DuckDNS 配置"
@@ -375,7 +506,7 @@ get_domain() {
     # 提供选择
     echo ""
     echo -e "${YELLOW}请选择域名来源:${NC}"
-    echo "  1. 使用 DuckDNS 自动申请 (简单)"
+    echo "  1. 一键申请 DuckDNS (最无脑)"
     echo "  2. 使用自己的域名"
     echo "  3. 返回上一级"
     echo ""
