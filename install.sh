@@ -6978,13 +6978,391 @@ remove_website() {
     fi
 }
 
+# ==================== Swap 管理功能 ====================
+
+manage_swap() {
+    clear
+    echo ""
+    echo -e "${CYAN}============================================================${NC}"
+    echo -e "${CYAN}                    Swap 管理${NC}"
+    echo -e "${CYAN}============================================================${NC}"
+    echo ""
+    
+    local swap_total=$(free -m | awk '/^Swap:/ {print $2}')
+    local swap_used=$(free -m | awk '/^Swap:/ {print $3}')
+    local mem_total=$(free -m | awk '/^Mem:/ {print $2}')
+    
+    if [[ "$swap_total" == "0" || -z "$swap_total" ]]; then
+        echo -e "  ${YELLOW}Swap: 未启用${NC}"
+    else
+        local usage_pct=0
+        if [[ "$swap_total" -gt 0 ]]; then
+            usage_pct=$(( swap_used * 100 / swap_total ))
+        fi
+        echo -e "  ${GREEN}Swap 总量:${NC} ${swap_total} MB"
+        echo -e "  ${GREEN}已使用:${NC} ${swap_used} MB (${usage_pct}%)"
+    fi
+    echo -e "  ${GREEN}内存总量:${NC} ${mem_total} MB"
+    echo ""
+    
+    if [[ -f /swapfile ]]; then
+        local swapfile_size=$(du -sh /swapfile 2>/dev/null | cut -f1)
+        echo -e "  ${GREEN}Swap 文件:${NC} /swapfile (${swapfile_size})"
+    elif swapon --show=NAME,SIZE 2>/dev/null | grep -q "^/"; then
+        echo -e "  ${GREEN}Swap 设备:${NC}"
+        swapon --show=NAME,SIZE,USED 2>/dev/null | grep "^/" | while read -r line; do
+            echo "    $line"
+        done
+    fi
+    
+    echo ""
+    echo -e "${CYAN}============================================================${NC}"
+    echo ""
+    echo -e "${YELLOW}操作选项:${NC}"
+    echo "  1. 一键创建 Swap (自动推荐大小)"
+    echo "  2. 自定义大小创建 Swap"
+    echo "  3. 删除 Swap"
+    echo "  4. 调整 Swappiness 值"
+    echo "  5. 返回主菜单"
+    echo ""
+    read -rp "请选择 [1-5]: " swap_choice
+    
+    case $swap_choice in
+        1)
+            local recommend_size=0
+            if [[ "$mem_total" -le 512 ]]; then
+                recommend_size=1024
+            elif [[ "$mem_total" -le 1024 ]]; then
+                recommend_size=2048
+            elif [[ "$mem_total" -le 2048 ]]; then
+                recommend_size=4096
+            elif [[ "$mem_total" -le 4096 ]]; then
+                recommend_size=4096
+            else
+                recommend_size=2048
+            fi
+            echo ""
+            echo -e "${YELLOW}内存: ${mem_total}MB, 推荐 Swap: ${recommend_size}MB${NC}"
+            read -rp "确认创建 ${recommend_size}MB Swap? [Y/n]: " confirm
+            if [[ "$confirm" != "n" && "$confirm" != "N" ]]; then
+                create_swap "$recommend_size"
+            fi
+            ;;
+        2)
+            echo ""
+            read -rp "请输入 Swap 大小 (MB): " custom_size
+            if [[ -z "$custom_size" ]] || ! [[ "$custom_size" =~ ^[0-9]+$ ]]; then
+                echo -e "${RED}请输入有效的数字${NC}"
+                read -rp "按回车键继续..."
+                return
+            fi
+            read -rp "确认创建 ${custom_size}MB Swap? [Y/n]: " confirm
+            if [[ "$confirm" != "n" && "$confirm" != "N" ]]; then
+                create_swap "$custom_size"
+            fi
+            ;;
+        3) remove_swap ;;
+        4) adjust_swappiness ;;
+        5) return ;;
+        *) warn "无效选择" ;;
+    esac
+    
+    echo ""
+    read -rp "按回车键继续..."
+}
+
+create_swap() {
+    local size_mb="$1"
+    if swapon --show 2>/dev/null | grep -q "^/"; then
+        echo -e "${YELLOW}检测到已有 Swap，先删除再创建...${NC}"
+        remove_swap
+    fi
+    echo -e "${YELLOW}正在创建 ${size_mb}MB Swap 文件...${NC}"
+    dd if=/dev/zero of=/swapfile bs=1M count="$size_mb" status=progress 2>/dev/null || \
+    dd if=/dev/zero of=/swapfile bs=1M count="$size_mb" 2>/dev/null
+    if [[ ! -f /swapfile ]]; then
+        echo -e "${RED}Swap 文件创建失败${NC}"
+        return 1
+    fi
+    chmod 600 /swapfile
+    mkswap /swapfile 2>/dev/null
+    swapon /swapfile 2>/dev/null
+    if ! grep -q "^/swapfile" /etc/fstab 2>/dev/null; then
+        echo "/swapfile none swap sw 0 0" >> /etc/fstab
+    fi
+    echo -e "${GREEN}Swap 创建完成!${NC}"
+    echo ""
+    free -m | grep -E "^Mem:|^Swap:"
+}
+
+remove_swap() {
+    echo -e "${YELLOW}正在删除 Swap...${NC}"
+    swapoff -a 2>/dev/null || true
+    if [[ -f /swapfile ]]; then
+        rm -f /swapfile
+    fi
+    sed -i '/^\/swapfile/d' /etc/fstab 2>/dev/null || true
+    echo -e "${GREEN}Swap 已删除${NC}"
+}
+
+adjust_swappiness() {
+    local current=$(cat /proc/sys/vm/swappiness 2>/dev/null || echo "30")
+    echo ""
+    echo -e "${YELLOW}当前 Swappiness: ${current}${NC}"
+    echo ""
+    echo "说明:"
+    echo "  0-10: 尽量减少 Swap 使用 (推荐用于 SSD/高性能服务器)"
+    echo "  30-60: 平衡模式 (默认推荐)"
+    echo "  60-100: 积极使用 Swap (内存紧张时使用)"
+    echo ""
+    read -rp "请输入新的 Swappiness 值 (0-100): " new_val
+    if [[ -z "$new_val" ]] || ! [[ "$new_val" =~ ^[0-9]+$ ]] || [[ "$new_val" -gt 100 ]]; then
+        echo -e "${RED}请输入 0-100 之间的数字${NC}"
+        return
+    fi
+    sysctl vm.swappiness="$new_val" 2>/dev/null
+    if grep -q "^vm.swappiness" /etc/sysctl.conf 2>/dev/null; then
+        sed -i "s/^vm.swappiness.*/vm.swappiness=${new_val}/" /etc/sysctl.conf 2>/dev/null || true
+    else
+        echo "vm.swappiness=${new_val}" >> /etc/sysctl.conf
+    fi
+    echo -e "${GREEN}Swappiness 已设置为 ${new_val}${NC}"
+}
+
+# ==================== 日志管理功能 ====================
+
+manage_logs() {
+    clear
+    echo ""
+    echo -e "${CYAN}============================================================${NC}"
+    echo -e "${CYAN}                    日志管理${NC}"
+    echo -e "${CYAN}============================================================${NC}"
+    echo ""
+    echo -e "${YELLOW}日志磁盘占用:${NC}"
+    echo ""
+    if command -v journalctl &>/dev/null; then
+        local journal_size=$(journalctl --disk-usage 2>/dev/null | grep -oP '[0-9.]+[KMGT]?' | head -1)
+        echo -e "  Systemd Journal: ${journal_size:-未知}"
+    fi
+    if [[ -d /var/log ]]; then
+        local log_dir_size=$(du -sh /var/log 2>/dev/null | cut -f1)
+        echo -e "  /var/log 目录: ${log_dir_size:-未知}"
+    fi
+    echo ""
+    echo -e "${YELLOW}各服务日志大小:${NC}"
+    local log_files=(
+        "/var/log/xray/access.log"
+        "/var/log/xray/error.log"
+        "/var/log/hysteria/server.log"
+        "/var/log/nginx/access.log"
+        "/var/log/nginx/error.log"
+        "/var/log/caddy/access.log"
+        "/var/log/vps-toolbox.log"
+    )
+    for log_file in "${log_files[@]}"; do
+        if [[ -f "$log_file" ]]; then
+            local size=$(du -sh "$log_file" 2>/dev/null | cut -f1)
+            echo -e "  ${log_file}: ${GREEN}${size}${NC}"
+        fi
+    done
+    echo ""
+    echo -e "${CYAN}============================================================${NC}"
+    echo ""
+    echo -e "${YELLOW}操作选项:${NC}"
+    echo "  1. 清理 Systemd Journal 日志"
+    echo "  2. 清理 /var/log 旧日志"
+    echo "  3. 清理代理服务日志"
+    echo "  4. 查看实时日志"
+    echo "  5. 配置日志自动清理 (cron)"
+    echo "  6. 一键清理所有日志"
+    echo "  7. 返回主菜单"
+    echo ""
+    read -rp "请选择 [1-7]: " log_choice
+    case $log_choice in
+        1) clean_journal_logs ;;
+        2) clean_var_logs ;;
+        3) clean_proxy_logs ;;
+        4) view_realtime_logs ;;
+        5) setup_log_rotation ;;
+        6) clean_all_logs ;;
+        7) return ;;
+        *) warn "无效选择" ;;
+    esac
+    echo ""
+    read -rp "按回车键继续..."
+}
+
+clean_journal_logs() {
+    if ! command -v journalctl &>/dev/null; then
+        echo -e "${YELLOW}未安装 systemd-journald${NC}"
+        return
+    fi
+    echo ""
+    echo -e "${YELLOW}当前 Journal 占用:${NC}"
+    journalctl --disk-usage 2>/dev/null
+    echo ""
+    echo "  1. 保留最近 1 天"
+    echo "  2. 保留最近 7 天"
+    echo "  3. 保留最近 30 天"
+    echo "  4. 保留最近 100MB"
+    echo "  5. 清空所有日志"
+    echo "  6. 返回"
+    echo ""
+    read -rp "请选择 [1-6]: " journal_choice
+    case $journal_choice in
+        1) journalctl --vacuum-time=1d 2>/dev/null ;;
+        2) journalctl --vacuum-time=7d 2>/dev/null ;;
+        3) journalctl --vacuum-time=30d 2>/dev/null ;;
+        4) journalctl --vacuum-size=100M 2>/dev/null ;;
+        5) journalctl --rotate 2>/dev/null && journalctl --vacuum-time=1s 2>/dev/null ;;
+        6) return ;;
+        *) warn "无效选择" ;;
+    esac
+    echo ""
+    echo -e "${GREEN}Journal 清理完成${NC}"
+    journalctl --disk-usage 2>/dev/null
+}
+
+clean_var_logs() {
+    echo -e "${YELLOW}正在清理 /var/log 旧日志...${NC}"
+    find /var/log -name "*.log.*" -type f -mtime +7 -delete 2>/dev/null || true
+    find /var/log -name "*.gz" -type f -mtime +30 -delete 2>/dev/null || true
+    for log_file in /var/log/*.log; do
+        if [[ -f "$log_file" ]]; then
+            : > "$log_file" 2>/dev/null || true
+        fi
+    done
+    echo -e "${GREEN}/var/log 清理完成${NC}"
+}
+
+clean_proxy_logs() {
+    echo -e "${YELLOW}正在清理代理服务日志...${NC}"
+    if [[ -d /var/log/xray ]]; then
+        : > /var/log/xray/access.log 2>/dev/null || true
+        : > /var/log/xray/error.log 2>/dev/null || true
+        echo -e "  ${GREEN}Xray 日志已清空${NC}"
+    fi
+    if [[ -d /var/log/hysteria ]]; then
+        : > /var/log/hysteria/server.log 2>/dev/null || true
+        echo -e "  ${GREEN}Hysteria 日志已清空${NC}"
+    fi
+    if [[ -d /var/log/nginx ]]; then
+        : > /var/log/nginx/access.log 2>/dev/null || true
+        : > /var/log/nginx/error.log 2>/dev/null || true
+        echo -e "  ${GREEN}Nginx 日志已清空${NC}"
+    fi
+    if [[ -d /var/log/caddy ]]; then
+        find /var/log/caddy -name "*.log" -type f -exec sh -c ': > "$1"' _ {} \; 2>/dev/null || true
+        echo -e "  ${GREEN}Caddy 日志已清空${NC}"
+    fi
+    : > /var/log/vps-toolbox.log 2>/dev/null || true
+    echo -e "  ${GREEN}VPS Toolbox 日志已清空${NC}"
+    echo ""
+    echo -e "${GREEN}代理服务日志清理完成${NC}"
+}
+
+view_realtime_logs() {
+    echo ""
+    echo -e "${YELLOW}选择要查看的日志:${NC}"
+    echo "  1. Xray 访问日志"
+    echo "  2. Xray 错误日志"
+    echo "  3. Hysteria 日志"
+    echo "  4. Nginx 访问日志"
+    echo "  5. Nginx 错误日志"
+    echo "  6. Systemd Journal (全部)"
+    echo "  7. VPS Toolbox 日志"
+    echo "  8. 返回"
+    echo ""
+    read -rp "请选择 [1-8]: " rt_choice
+    local log_file=""
+    local use_journal=false
+    case $rt_choice in
+        1) log_file="/var/log/xray/access.log" ;;
+        2) log_file="/var/log/xray/error.log" ;;
+        3) log_file="/var/log/hysteria/server.log" ;;
+        4) log_file="/var/log/nginx/access.log" ;;
+        5) log_file="/var/log/nginx/error.log" ;;
+        6) use_journal=true ;;
+        7) log_file="/var/log/vps-toolbox.log" ;;
+        8) return ;;
+        *) warn "无效选择"; return ;;
+    esac
+    echo ""
+    echo -e "${YELLOW}按 Ctrl+C 退出实时查看${NC}"
+    echo ""
+    if [[ "$use_journal" == true ]]; then
+        journalctl -f 2>/dev/null || echo -e "${RED}journalctl 不可用${NC}"
+    elif [[ -f "$log_file" ]]; then
+        tail -f "$log_file" 2>/dev/null
+    else
+        echo -e "${YELLOW}日志文件不存在: ${log_file}${NC}"
+    fi
+}
+
+setup_log_rotation() {
+    echo -e "${YELLOW}配置日志自动清理...${NC}"
+    echo ""
+    echo "  1. 每天清理一次"
+    echo "  2. 每周清理一次"
+    echo "  3. 每月清理一次"
+    echo "  4. 关闭自动清理"
+    echo "  5. 返回"
+    echo ""
+    read -rp "请选择 [1-5]: " rot_choice
+    local cron_expr=""
+    case $rot_choice in
+        1) cron_expr="0 3 * * *" ;;
+        2) cron_expr="0 3 * * 0" ;;
+        3) cron_expr="0 3 1 * *" ;;
+        4)
+            crontab -l 2>/dev/null | grep -v "vps-toolbox-log-clean" | crontab - 2>/dev/null || true
+            echo -e "${GREEN}自动清理已关闭${NC}"
+            return
+            ;;
+        5) return ;;
+        *) warn "无效选择"; return ;;
+    esac
+    cat > /usr/local/bin/vps-toolbox-log-clean.sh <<'CLEANSCRIPT'
+#!/bin/bash
+if command -v journalctl &>/dev/null; then
+    journalctl --vacuum-time=7d --quiet 2>/dev/null
+fi
+for log_file in /var/log/xray/access.log /var/log/xray/error.log /var/log/hysteria/server.log; do
+    if [[ -f "$log_file" ]] && [[ $(stat -f%z "$log_file" 2>/dev/null || stat -c%s "$log_file" 2>/dev/null || echo 0) -gt 104857600 ]]; then
+        : > "$log_file"
+    fi
+done
+find /var/log -name "*.log.*" -type f -mtime +7 -delete 2>/dev/null || true
+CLEANSCRIPT
+    chmod +x /usr/local/bin/vps-toolbox-log-clean.sh
+    (crontab -l 2>/dev/null | grep -v "vps-toolbox-log-clean"; echo "$cron_expr /usr/local/bin/vps-toolbox-log-clean.sh >/dev/null 2>&1") | crontab -
+    echo -e "${GREEN}日志自动清理已设置!${NC}"
+    echo -e "${YELLOW}清理频率: $cron_expr${NC}"
+    echo -e "${YELLOW}清理脚本: /usr/local/bin/vps-toolbox-log-clean.sh${NC}"
+}
+
+clean_all_logs() {
+    echo ""
+    echo -e "${RED}警告: 此操作将清空所有日志!${NC}"
+    read -rp "确认清理? [y/N]: " confirm
+    if [[ "$confirm" == "y" || "$confirm" == "Y" ]]; then
+        clean_journal_logs
+        clean_var_logs
+        clean_proxy_logs
+        echo ""
+        echo -e "${GREEN}所有日志清理完成!${NC}"
+    else
+        echo -e "${YELLOW}已取消${NC}"
+    fi
+}
+
 show_banner() {
 
     echo ""
 
     echo -e "${CYAN}============================================================${NC}"
 
-    echo -e "${GREEN}           VPS Toolbox - 多功能一键部署工具 v3.4.0${NC}"
+    echo -e "${GREEN}           VPS Toolbox - 多功能一键部署工具 v3.5.0${NC}"
 
     echo -e "${CYAN}============================================================${NC}"
 
@@ -7074,17 +7452,25 @@ show_menu() {
 
     echo "    19. 部署伪装网站"
 
+    echo -e "  ${YELLOW}[系统维护]${NC}"
+
+    echo "    20. Swap 管理"
+
+    echo "    21. 日志管理"
+
+    echo ""
+
     echo -e "  ${YELLOW}[管理]${NC}"
 
-    echo "    20. 查看所有配置"
+    echo "    22. 查看所有配置"
 
-    echo "    21. 生成订阅链接"
+    echo "    23. 生成订阅链接"
 
-    echo "    22. 流量统计"
+    echo "    24. 流量统计"
 
-    echo "    23. 使用统计详情"
+    echo "    25. 使用统计详情"
 
-    echo "    24. 卸载服务"
+    echo "    26. 卸载服务"
 
     echo "    0. 退出脚本"
 
@@ -7120,7 +7506,7 @@ main() {
 
         show_menu
 
-        read -rp "请选择操作 [0-24]: " choice
+        read -rp "请选择操作 [0-26]: " choice
 
         
 
@@ -7164,15 +7550,19 @@ main() {
 
             19) website_manager ;;
 
-            20) view_config ;;
+            20) manage_swap ;;
 
-            21) show_subscription ;;
+            21) manage_logs ;;
 
-            22) show_traffic_stats ;;
+            22) view_config ;;
 
-            23) view_stats_menu ;;
+            23) show_subscription ;;
 
-            24) uninstall_service ;;
+            24) show_traffic_stats ;;
+
+            25) view_stats_menu ;;
+
+            26) uninstall_service ;;
 
             0)
 
