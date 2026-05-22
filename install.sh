@@ -6,7 +6,7 @@ sed -i 's/\r$//' "$0" 2>/dev/null || true
 # 功能: DDNS/WARP/Vless/Hysteria2/SS/VMess/HTTPS代理
 # 作者: Kitaro-Loked
 # 仓库: https://github.com/Kitaro-Loked/VPS-Toolbox
-# 版本: 2.7.0
+# 版本: 2.8.0
 # 致谢: 协议安装脚本全部来自 yeahwu/v2ray-wss
 #       https://github.com/yeahwu/v2ray-wss
 #       本项目仅提供菜单封装、DDNS、WARP、订阅链接等管理功能
@@ -1103,10 +1103,542 @@ dd_system() {
     fi
 }
 
+# 网络测速功能
+speed_test() {
+    clear
+    echo ""
+    echo -e "${CYAN}============================================================${NC}"
+    echo -e "${CYAN}                    网络测速${NC}"
+    echo -e "${CYAN}============================================================${NC}"
+    echo ""
+    
+    echo -e "${YELLOW}请选择测速方式:${NC}"
+    echo ""
+    echo "  1. Speedtest (全球节点)"
+    echo "  2. 国内三网测速 (电信/联通/移动)"
+    echo "  3. 回程路由测试 (BestTrace)"
+    echo "  4. 回程路由测试 (NextTrace)"
+    echo "  5. 带宽测试 (iPerf3)"
+    echo "  6. 返回主菜单"
+    echo ""
+    echo -e "${CYAN}============================================================${NC}"
+    echo ""
+    read -rp "请选择 [1-6]: " speed_choice
+    
+    case $speed_choice in
+        1)
+            echo -e "${YELLOW}正在安装 Speedtest...${NC}"
+            if ! command -v speedtest &>/dev/null; then
+                curl -sL https://packagecloud.io/install/repositories/ookla/speedtest/script.deb.sh | bash 2>/dev/null || true
+                apt install -y speedtest 2>/dev/null || yum install -y speedtest 2>/dev/null || true
+            fi
+            
+            if command -v speedtest &>/dev/null; then
+                echo -e "${GREEN}开始测速...${NC}"
+                speedtest --accept-license --accept-gdpr
+            else
+                # 备用方案
+                echo -e "${YELLOW}使用备用方案 (speedtest-go)...${NC}"
+                if [[ ! -f /tmp/speedtest-go ]]; then
+                    local arch=$(uname -m)
+                    local go_arch=""
+                    case $arch in
+                        x86_64) go_arch="x86_64" ;;
+                        aarch64) go_arch="arm64" ;;
+                        *) go_arch="x86_64" ;;
+                    esac
+                    wget -qO /tmp/speedtest-go.tar.gz "https://github.com/showwin/speedtest-go/releases/latest/download/speedtest-go_${go_arch}.tar.gz" 2>/dev/null || true
+                    if [[ -f /tmp/speedtest-go.tar.gz ]]; then
+                        tar -xzf /tmp/speedtest-go.tar.gz -C /tmp 2>/dev/null
+                        chmod +x /tmp/speedtest-go 2>/dev/null
+                    fi
+                fi
+                if [[ -x /tmp/speedtest-go ]]; then
+                    /tmp/speedtest-go
+                else
+                    echo -e "${RED}测速工具安装失败${NC}"
+                fi
+            fi
+            ;;
+            
+        2)
+            echo -e "${YELLOW}国内三网测速...${NC}"
+            echo ""
+            
+            # 使用 superspeed 脚本
+            echo -e "${GREEN}[电信节点]${NC}"
+            bash <(curl -sL https://raw.githubusercontent.com/oooldking/script/master/superspeed.sh) 2>/dev/null || \
+            bash <(curl -sL https://raw.githubusercontent.com/zq/superspeed/master/superspeed.sh) 2>/dev/null || \
+            echo -e "${YELLOW}三网测速脚本暂时不可用，尝试单节点测试...${NC}"
+            
+            # 备用：直接测几个国内节点
+            if [[ ! -f /tmp/speedtest-go ]]; then
+                local arch=$(uname -m)
+                local go_arch="x86_64"
+                [[ "$arch" == "aarch64" ]] && go_arch="arm64"
+                wget -qO /tmp/speedtest-go.tar.gz "https://github.com/showwin/speedtest-go/releases/latest/download/speedtest-go_${go_arch}.tar.gz" 2>/dev/null || true
+                [[ -f /tmp/speedtest-go.tar.gz ]] && tar -xzf /tmp/speedtest-go.tar.gz -C /tmp 2>/dev/null && chmod +x /tmp/speedtest-go 2>/dev/null
+            fi
+            
+            if [[ -x /tmp/speedtest-go ]]; then
+                echo ""
+                echo -e "${GREEN}使用 speedtest-go 测试附近节点...${NC}"
+                /tmp/speedtest-go --server 5315 2>/dev/null || true   # 上海电信
+                /tmp/speedtest-go --server 5505 2>/dev/null || true   # 北京联通
+                /tmp/speedtest-go --server 4617 2>/dev/null || true   # 深圳移动
+            fi
+            ;;
+            
+        3)
+            echo -e "${YELLOW}安装 BestTrace...${NC}"
+            if ! command -v besttrace &>/dev/null; then
+                cd /tmp
+                wget -qO besttrace4linux.zip "https://cdn.ipip.net/17mon/besttrace4linux.zip" 2>/dev/null || \
+                wget -qO besttrace4linux.zip "https://github.com/rennzhang/BestTrace/raw/main/besttrace4linux.zip" 2>/dev/null || true
+                if [[ -f besttrace4linux.zip ]]; then
+                    unzip -o besttrace4linux.zip besttrace 2>/dev/null || true
+                    chmod +x besttrace 2>/dev/null
+                    mv besttrace /usr/local/bin/ 2>/dev/null || true
+                fi
+            fi
+            
+            if command -v besttrace &>/dev/null; then
+                echo -e "${GREEN}回程路由测试 (到 223.5.5.5 阿里DNS)...${NC}"
+                besttrace -q 1 223.5.5.5
+                echo ""
+                echo -e "${GREEN}回程路由测试 (到 119.29.29.29 腾讯DNS)...${NC}"
+                besttrace -q 1 119.29.29.29
+            else
+                echo -e "${RED}BestTrace 安装失败，使用 mtr 代替...${NC}"
+                if command -v mtr &>/dev/null; then
+                    mtr -r -c 10 223.5.5.5
+                else
+                    traceroute 223.5.5.5
+                fi
+            fi
+            ;;
+            
+        4)
+            echo -e "${YELLOW}安装 NextTrace...${NC}"
+            if ! command -v nexttrace &>/dev/null; then
+                bash <(curl -Ls nxtrace.org/nt) 2>/dev/null || \
+                wget -qO /tmp/nexttrace https://github.com/nxtrace/NTrace-core/releases/latest/download/nexttrace_linux_amd64 && \
+                chmod +x /tmp/nexttrace && mv /tmp/nexttrace /usr/local/bin/ 2>/dev/null || true
+            fi
+            
+            if command -v nexttrace &>/dev/null; then
+                echo -e "${GREEN}回程路由测试 (到 223.5.5.5)...${NC}"
+                nexttrace 223.5.5.5
+            else
+                echo -e "${RED}NextTrace 安装失败${NC}"
+            fi
+            ;;
+            
+        5)
+            echo -e "${YELLOW}iPerf3 带宽测试...${NC}"
+            if ! command -v iperf3 &>/dev/null; then
+                apt install -y iperf3 2>/dev/null || yum install -y iperf3 2>/dev/null || dnf install -y iperf3 2>/dev/null || true
+            fi
+            
+            if command -v iperf3 &>/dev/null; then
+                echo -e "${GREEN}公共 iPerf3 服务器列表:${NC}"
+                echo "  iperf.he.net        (Hurricane Electric)"
+                echo "  iperf.scottlinux.com"
+                echo "  bouygues.iperf.fr"
+                echo ""
+                read -rp "请输入 iPerf3 服务器地址 (默认 iperf.he.net): " iperf_server
+                [[ -z "$iperf_server" ]] && iperf_server="iperf.he.net"
+                echo -e "${GREEN}正在测试到 ${iperf_server}...${NC}"
+                iperf3 -c "$iperf_server" -t 10
+            else
+                echo -e "${RED}iPerf3 安装失败${NC}"
+            fi
+            ;;
+            
+        6)
+            return
+            ;;
+            
+        *)
+            warn "无效选择"
+            ;;
+    esac
+    
+    echo ""
+    read -rp "按回车键继续..."
+}
+
+# 证书管理功能
+manage_cert() {
+    clear
+    echo ""
+    echo -e "${CYAN}============================================================${NC}"
+    echo -e "${CYAN}                    SSL 证书管理${NC}"
+    echo -e "${CYAN}============================================================${NC}"
+    echo ""
+    
+    # 检查 acme.sh 是否安装
+    local acme_sh="$HOME/.acme.sh/acme.sh"
+    [[ ! -f "$acme_sh" ]] && acme_sh="/root/.acme.sh/acme.sh"
+    
+    if [[ ! -f "$acme_sh" ]]; then
+        echo -e "${YELLOW}acme.sh 未安装，正在安装...${NC}"
+        curl https://get.acme.sh | bash 2>/dev/null || true
+        acme_sh="$HOME/.acme.sh/acme.sh"
+        [[ ! -f "$acme_sh" ]] && acme_sh="/root/.acme.sh/acme.sh"
+    fi
+    
+    # 查找所有证书
+    local cert_dir=""
+    if [[ -d "$HOME/.acme.sh" ]]; then
+        cert_dir="$HOME/.acme.sh"
+    elif [[ -d "/root/.acme.sh" ]]; then
+        cert_dir="/root/.acme.sh"
+    fi
+    
+    echo -e "${GREEN}已安装的证书:${NC}"
+    echo ""
+    
+    if [[ -d "$cert_dir" ]]; then
+        local found_cert=false
+        for cert_path in "$cert_dir"/*/*.cer; do
+            [[ ! -f "$cert_path" ]] && continue
+            found_cert=true
+            local domain=$(basename "$cert_path" .cer)
+            local cert_file="$cert_dir/${domain}/${domain}.cer"
+            
+            if [[ -f "$cert_file" ]]; then
+                # 获取到期时间
+                local end_date=$(openssl x509 -in "$cert_file" -noout -enddate 2>/dev/null | cut -d= -f2)
+                local expire_ts=$(date -d "$end_date" +%s 2>/dev/null || echo "0")
+                local now_ts=$(date +%s)
+                local days_left=$(( (expire_ts - now_ts) / 86400 ))
+                
+                # 颜色标记
+                local color="${GREEN}"
+                [[ $days_left -lt 7 ]] && color="${RED}"
+                [[ $days_left -lt 30 && $days_left -ge 7 ]] && color="${YELLOW}"
+                
+                echo -e "  域名: ${GREEN}${domain}${NC}"
+                echo -e "  到期: ${color}${end_date}${NC}"
+                echo -e "  剩余: ${color}${days_left} 天${NC}"
+                echo ""
+            fi
+        done
+        
+        if [[ "$found_cert" == false ]]; then
+            echo -e "  ${YELLOW}未找到证书${NC}"
+        fi
+    else
+        echo -e "  ${YELLOW}证书目录不存在${NC}"
+    fi
+    
+    echo -e "${CYAN}============================================================${NC}"
+    echo ""
+    echo -e "${YELLOW}操作选项:${NC}"
+    echo "  1. 手动续签所有证书"
+    echo "  2. 强制重新申请证书"
+    echo "  3. 查看证书详情"
+    echo "  4. 删除证书"
+    echo "  5. 设置自动续签 (cron)"
+    echo "  6. 返回主菜单"
+    echo ""
+    read -rp "请选择 [1-6]: " cert_choice
+    
+    case $cert_choice in
+        1)
+            echo -e "${YELLOW}正在续签所有证书...${NC}"
+            if [[ -f "$acme_sh" ]]; then
+                "$acme_sh" --cron --home "$cert_dir" --server letsencrypt
+                echo -e "${GREEN}续签完成!${NC}"
+            else
+                echo -e "${RED}acme.sh 未找到${NC}"
+            fi
+            ;;
+            
+        2)
+            echo ""
+            read -rp "请输入域名: " domain
+            if [[ -n "$domain" ]]; then
+                echo -e "${YELLOW}正在重新申请 ${domain} 的证书...${NC}"
+                if [[ -f "$acme_sh" ]]; then
+                    # 尝试使用 standalone 模式
+                    "$acme_sh" --issue --standalone -d "$domain" --server letsencrypt --force 2>/dev/null || \
+                    echo -e "${RED}申请失败，请确保:${NC}" && \
+                    echo -e "  ${YELLOW}- 域名已解析到本机${NC}" && \
+                    echo -e "  ${YELLOW}- 80 端口未被占用${NC}"
+                fi
+            fi
+            ;;
+            
+        3)
+            echo ""
+            read -rp "请输入域名: " domain
+            if [[ -n "$domain" && -f "$cert_dir/${domain}/${domain}.cer" ]]; then
+                echo -e "${GREEN}证书详情:${NC}"
+                openssl x509 -in "$cert_dir/${domain}/${domain}.cer" -noout -text 2>/dev/null | head -30
+            else
+                echo -e "${RED}证书不存在${NC}"
+            fi
+            ;;
+            
+        4)
+            echo ""
+            read -rp "请输入要删除的域名: " domain
+            if [[ -n "$domain" ]]; then
+                read -rp "确认删除 ${domain} 的证书? [y/N]: " confirm
+                if [[ "$confirm" == "y" || "$confirm" == "Y" ]]; then
+                    "$acme_sh" --remove -d "$domain" 2>/dev/null || true
+                    rm -rf "$cert_dir/${domain}" 2>/dev/null || true
+                    echo -e "${GREEN}证书已删除${NC}"
+                fi
+            fi
+            ;;
+            
+        5)
+            echo -e "${YELLOW}设置自动续签...${NC}"
+            if [[ -f "$acme_sh" ]]; then
+                # 安装 cron 任务
+                "$acme_sh" --install-cronjob 2>/dev/null || true
+                
+                # 验证 cron
+                if crontab -l 2>/dev/null | grep -q acme; then
+                    echo -e "${GREEN}自动续签已设置!${NC}"
+                    echo -e "${YELLOW}Cron 任务:${NC}"
+                    crontab -l | grep acme
+                else
+                    # 手动添加
+                    (crontab -l 2>/dev/null; echo "0 2 * * * $acme_sh --cron --home $cert_dir --server letsencrypt > /dev/null 2>&1") | crontab -
+                    echo -e "${GREEN}已添加每日 2:00 自动续签任务${NC}"
+                fi
+            fi
+            ;;
+            
+        6)
+            return
+            ;;
+            
+        *)
+            warn "无效选择"
+            ;;
+    esac
+    
+    echo ""
+    read -rp "按回车键继续..."
+}
+
+# 端口占用一览
+port_status() {
+    clear
+    echo ""
+    echo -e "${CYAN}============================================================${NC}"
+    echo -e "${CYAN}                    端口占用一览${NC}"
+    echo -e "${CYAN}============================================================${NC}"
+    echo ""
+    
+    # 系统监听端口
+    echo -e "${GREEN}[系统监听端口]${NC}"
+    echo ""
+    printf "  %-8s %-8s %-20s %-15s %s\n" "协议" "端口" "服务" "进程" "状态"
+    printf "  %-8s %-8s %-20s %-15s %s\n" "----" "----" "------" "------" "------"
+    
+    ss -tlnp 2>/dev/null | awk 'NR>1 {
+        proto="TCP"
+        port=$4
+        gsub(/.*:/, "", port)
+        proc=$6
+        gsub(/users:/, "", proc)
+        state=$1
+        printf "  %-8s %-8s %-20s %-15s %s\n", proto, port, "-", proc, state
+    }' | sort -n -k2 | head -30
+    
+    ss -ulnp 2>/dev/null | awk 'NR>1 {
+        proto="UDP"
+        port=$4
+        gsub(/.*:/, "", port)
+        proc=$6
+        gsub(/users:/, "", proc)
+        printf "  %-8s %-8s %-20s %-15s %s\n", proto, port, "-", proc, "LISTEN"
+    }' | sort -n -k2 | head -20
+    
+    echo ""
+    
+    # 代理协议端口
+    echo -e "${GREEN}[代理协议端口]${NC}"
+    echo ""
+    
+    # Vless/Xray
+    if [[ -f /usr/local/etc/xray/config.json ]]; then
+        local xray_port=$(jq -r '.inbounds[0].port // empty' /usr/local/etc/xray/config.json 2>/dev/null)
+        local xray_proto=$(jq -r '.inbounds[0].protocol // empty' /usr/local/etc/xray/config.json 2>/dev/null)
+        if [[ -n "$xray_port" ]]; then
+            local status="${GREEN}运行中${NC}"
+            systemctl is-active --quiet xray 2>/dev/null || status="${RED}未运行${NC}"
+            printf "  %-15s %-8s %-15s %b\n" "Xray/Vless" "$xray_port" "$xray_proto" "$status"
+        fi
+    fi
+    
+    # Hysteria2
+    if [[ -f /etc/hysteria/config.yaml ]] || [[ -f /etc/hysteria2/config.yaml ]]; then
+        local hy_config=""
+        [[ -f /etc/hysteria/config.yaml ]] && hy_config="/etc/hysteria/config.yaml"
+        [[ -f /etc/hysteria2/config.yaml ]] && hy_config="/etc/hysteria2/config.yaml"
+        if [[ -n "$hy_config" ]]; then
+            local hy_port=$(grep -E '^listen:' "$hy_config" 2>/dev/null | grep -oE '[0-9]+' | head -1)
+            if [[ -n "$hy_port" ]]; then
+                local status="${GREEN}运行中${NC}"
+                systemctl is-active --quiet hysteria-server 2>/dev/null || systemctl is-active --quiet hysteria2 2>/dev/null || status="${RED}未运行${NC}"
+                printf "  %-15s %-8s %-15s %b\n" "Hysteria2" "$hy_port" "QUIC" "$status"
+            fi
+        fi
+    fi
+    
+    # Shadowsocks
+    if [[ -f /etc/shadowsocks/config.json ]]; then
+        local ss_port=$(jq -r '.server_port // empty' /etc/shadowsocks/config.json 2>/dev/null)
+        if [[ -n "$ss_port" ]]; then
+            local status="${GREEN}运行中${NC}"
+            systemctl is-active --quiet shadowsocks-rust 2>/dev/null || systemctl is-active --quiet shadowsocks 2>/dev/null || status="${RED}未运行${NC}"
+            printf "  %-15s %-8s %-15s %b\n" "Shadowsocks" "$ss_port" "TCP/UDP" "$status"
+        fi
+    fi
+    
+    # Nginx (for VMess/HTTPS proxy)
+    if command -v nginx &>/dev/null; then
+        local nginx_ports=$(ss -tlnp | grep nginx | awk '{print $4}' | sed 's/.*://' | sort -u | tr '\n' ',' | sed 's/,$//')
+        if [[ -n "$nginx_ports" ]]; then
+            local status="${GREEN}运行中${NC}"
+            systemctl is-active --quiet nginx 2>/dev/null || status="${RED}未运行${NC}"
+            printf "  %-15s %-8s %-15s %b\n" "Nginx" "$nginx_ports" "HTTP/HTTPS" "$status"
+        fi
+    fi
+    
+    # Caddy
+    if command -v caddy &>/dev/null; then
+        local caddy_ports=$(ss -tlnp | grep caddy | awk '{print $4}' | sed 's/.*://' | sort -u | tr '\n' ',' | sed 's/,$//')
+        if [[ -n "$caddy_ports" ]]; then
+            local status="${GREEN}运行中${NC}"
+            systemctl is-active --quiet caddy 2>/dev/null || status="${RED}未运行${NC}"
+            printf "  %-15s %-8s %-15s %b\n" "Caddy" "$caddy_ports" "HTTP/HTTPS" "$status"
+        fi
+    fi
+    
+    echo ""
+    
+    # 防火墙状态
+    echo -e "${GREEN}[防火墙状态]${NC}"
+    echo ""
+    if command -v ufw &>/dev/null; then
+        echo -e "  UFW: $(ufw status numbered 2>/dev/null | head -5)"
+    elif command -v firewall-cmd &>/dev/null; then
+        echo -e "  Firewalld: $(firewall-cmd --state 2>/dev/null || echo '未运行')"
+    elif command -v iptables &>/dev/null; then
+        echo -e "  iptables: $(iptables -L -n 2>/dev/null | grep -c 'ACCEPT') 条 ACCEPT 规则"
+    else
+        echo -e "  ${YELLOW}未检测到防火墙${NC}"
+    fi
+    
+    echo ""
+    echo -e "${CYAN}============================================================${NC}"
+    echo ""
+    
+    echo -e "${YELLOW}操作选项:${NC}"
+    echo "  1. 测试端口连通性"
+    echo "  2. 一键开放所有代理端口"
+    echo "  3. 返回主菜单"
+    echo ""
+    read -rp "请选择 [1-3]: " port_choice
+    
+    case $port_choice in
+        1)
+            echo ""
+            read -rp "请输入要测试的端口: " test_port
+            if [[ -n "$test_port" ]]; then
+                if ss -tln | grep -q ":${test_port} "; then
+                    echo -e "${GREEN}端口 ${test_port} 正在监听${NC}"
+                else
+                    echo -e "${RED}端口 ${test_port} 未监听${NC}"
+                fi
+                
+                # 外部连通性测试
+                echo -e "${YELLOW}测试外部连通性...${NC}"
+                local server_ip=$(get_server_ip)
+                echo -e "  服务器 IP: ${server_ip}"
+                echo -e "  ${YELLOW}提示: 使用在线工具检测 ${server_ip}:${test_port} 是否可访问${NC}"
+            fi
+            ;;
+            
+        2)
+            echo -e "${YELLOW}正在开放所有代理端口...${NC}"
+            
+            # 收集所有代理端口
+            local ports_to_open=""
+            
+            if [[ -f /usr/local/etc/xray/config.json ]]; then
+                local xport=$(jq -r '.inbounds[0].port // empty' /usr/local/etc/xray/config.json 2>/dev/null)
+                [[ -n "$xport" ]] && ports_to_open="$ports_to_open $xport"
+            fi
+            
+            if [[ -f /etc/hysteria/config.yaml ]]; then
+                local hport=$(grep -E '^listen:' /etc/hysteria/config.yaml 2>/dev/null | grep -oE '[0-9]+' | head -1)
+                [[ -n "$hport" ]] && ports_to_open="$ports_to_open $hport"
+            fi
+            
+            if [[ -f /etc/shadowsocks/config.json ]]; then
+                local sport=$(jq -r '.server_port // empty' /etc/shadowsocks/config.json 2>/dev/null)
+                [[ -n "$sport" ]] && ports_to_open="$ports_to_open $sport"
+            fi
+            
+            # 开放端口
+            for port in $ports_to_open; do
+                if command -v ufw &>/dev/null; then
+                    ufw allow "$port/tcp" 2>/dev/null || true
+                    ufw allow "$port/udp" 2>/dev/null || true
+                    echo -e "  ${GREEN}UFW 已开放端口 ${port}${NC}"
+                elif command -v firewall-cmd &>/dev/null; then
+                    firewall-cmd --permanent --add-port="${port}/tcp" 2>/dev/null || true
+                    firewall-cmd --permanent --add-port="${port}/udp" 2>/dev/null || true
+                    firewall-cmd --reload 2>/dev/null || true
+                    echo -e "  ${GREEN}Firewalld 已开放端口 ${port}${NC}"
+                elif command -v iptables &>/dev/null; then
+                    iptables -I INPUT -p tcp --dport "$port" -j ACCEPT 2>/dev/null || true
+                    iptables -I INPUT -p udp --dport "$port" -j ACCEPT 2>/dev/null || true
+                    echo -e "  ${GREEN}iptables 已开放端口 ${port}${NC}"
+                fi
+            done
+            
+            # 同时开放常用端口
+            if command -v ufw &>/dev/null; then
+                ufw allow 22/tcp 2>/dev/null || true
+                ufw allow 80/tcp 2>/dev/null || true
+                ufw allow 443/tcp 2>/dev/null || true
+            elif command -v firewall-cmd &>/dev/null; then
+                firewall-cmd --permanent --add-service=ssh 2>/dev/null || true
+                firewall-cmd --permanent --add-service=http 2>/dev/null || true
+                firewall-cmd --permanent --add-service=https 2>/dev/null || true
+                firewall-cmd --reload 2>/dev/null || true
+            fi
+            
+            echo -e "${GREEN}端口开放完成!${NC}"
+            ;;
+            
+        3)
+            return
+            ;;
+            
+        *)
+            warn "无效选择"
+            ;;
+    esac
+    
+    echo ""
+    read -rp "按回车键继续..."
+}
+
 show_banner() {
     echo ""
     echo -e "${CYAN}============================================================${NC}"
-    echo -e "${GREEN}           VPS Toolbox - 多功能一键部署工具 v2.7.0${NC}"
+    echo -e "${GREEN}           VPS Toolbox - 多功能一键部署工具 v2.8.0${NC}"
     echo -e "${CYAN}============================================================${NC}"
     echo -e "  ${YELLOW}作者${NC}: Kitaro-Loked"
     echo -e "  ${YELLOW}仓库${NC}: https://github.com/Kitaro-Loked/VPS-Toolbox"
@@ -1134,11 +1666,16 @@ show_menu() {
     echo "    8. 网络优化 (BBR/系统参数)"
     echo "    9. 一键重装系统 (DD)"
     echo ""
+    echo -e "  ${YELLOW}[工具]${NC}"
+    echo "    10. 网络测速"
+    echo "    11. SSL 证书管理"
+    echo "    12. 端口占用一览"
+    echo ""
     echo -e "  ${YELLOW}[管理]${NC}"
-    echo "    10. 查看所有配置"
-    echo "    11. 生成订阅链接"
-    echo "    12. 流量统计"
-    echo "    13. 卸载服务"
+    echo "    13. 查看所有配置"
+    echo "    14. 生成订阅链接"
+    echo "    15. 流量统计"
+    echo "    16. 卸载服务"
     echo "    0. 退出脚本"
     echo ""
     echo -e "${CYAN}============================================================${NC}"
@@ -1152,7 +1689,7 @@ main() {
     
     while true; do
         show_menu
-        read -rp "请选择操作 [0-13]: " choice
+        read -rp "请选择操作 [0-16]: " choice
         
         case $choice in
             1) setup_ddns ;;
@@ -1164,10 +1701,13 @@ main() {
             7) install_https_proxy ;;
             8) optimize_system ;;
             9) dd_system ;;
-            10) view_config ;;
-            11) show_subscription ;;
-            12) show_traffic_stats ;;
-            13) uninstall_service ;;
+            10) speed_test ;;
+            11) manage_cert ;;
+            12) port_status ;;
+            13) view_config ;;
+            14) show_subscription ;;
+            15) show_traffic_stats ;;
+            16) uninstall_service ;;
             0)
                 echo -e "${GREEN}感谢使用 VPS Toolbox，再见!${NC}"
                 exit 0
