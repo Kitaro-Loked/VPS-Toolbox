@@ -3338,8 +3338,6 @@ EOF
 
             local test_msg="🚀 *VPS Toolbox* 配置成功
 
-eg
-
 服务器: $(hostname)
 
 IP: $(get_server_ip)
