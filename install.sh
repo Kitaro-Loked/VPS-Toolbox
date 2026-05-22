@@ -6,7 +6,7 @@ sed -i 's/\r$//' "$0" 2>/dev/null || true
 # 功能: DDNS/WARP/Vless/Hysteria2/SS/VMess/HTTPS代理
 # 作者: Kitaro-Loked
 # 仓库: https://github.com/Kitaro-Loked/VPS-Toolbox
-# 版本: 2.5.0
+# 版本: 2.7.0
 # 致谢: 协议安装脚本全部来自 yeahwu/v2ray-wss
 #       https://github.com/yeahwu/v2ray-wss
 #       本项目仅提供菜单封装、DDNS、WARP、订阅链接等管理功能
@@ -832,10 +832,281 @@ show_traffic_stats() {
     read -rp "按回车键继续..."
 }
 
+# 系统优化功能
+optimize_system() {
+    clear
+    echo ""
+    echo -e "${CYAN}============================================================${NC}"
+    echo -e "${CYAN}                    系统网络优化${NC}"
+    echo -e "${CYAN}============================================================${NC}"
+    echo ""
+    
+    echo -e "${YELLOW}请选择优化项目:${NC}"
+    echo ""
+    echo "  1. 一键开启 BBR + FQ (推荐)"
+    echo "  2. 开启 BBR + CAKE"
+    echo "  3. 开启 BBR + FQ_CODEL"
+    echo "  4. 还原为默认 CUBIC"
+    echo "  5. 安装并配置 vnStat 流量监控"
+    echo "  6. 优化系统参数 (文件描述符/缓冲区)"
+    echo "  7. 返回主菜单"
+    echo ""
+    echo -e "${CYAN}============================================================${NC}"
+    echo ""
+    read -rp "请选择 [1-7]: " opt_choice
+    
+    case $opt_choice in
+        1|2|3|4)
+            local cc_algo="bbr"
+            local qdisc="fq"
+            
+            case $opt_choice in
+                1) qdisc="fq" ;;
+                2) qdisc="cake" ;;
+                3) qdisc="fq_codel" ;;
+                4) cc_algo="cubic"; qdisc="fq_codel" ;;
+            esac
+            
+            echo -e "${YELLOW}正在设置 TCP 拥塞控制: ${cc_algo}, 队列算法: ${qdisc}${NC}"
+            
+            # 检查内核版本是否支持 BBR
+            local kernel_version=$(uname -r | cut -d. -f1-2)
+            if [[ "$opt_choice" != "4" ]]; then
+                if [[ $(echo "$kernel_version >= 4.9" | bc 2>/dev/null || echo "0") == "0" ]]; then
+                    if [[ $(echo "$kernel_version < 4.9" | bc 2>/dev/null || echo "1") == "1" ]]; then
+                        echo -e "${RED}错误: 当前内核版本 $(uname -r) 不支持 BBR，需要 4.9+${NC}"
+                        read -rp "按回车键继续..."
+                        return
+                    fi
+                fi
+            fi
+            
+            # 加载 TCP BBR 模块
+            if [[ "$cc_algo" == "bbr" ]]; then
+                modprobe tcp_bbr 2>/dev/null || true
+                if ! lsmod | grep -q tcp_bbr; then
+                    echo -e "${YELLOW}警告: 无法加载 tcp_bbr 模块，尝试继续...${NC}"
+                fi
+            fi
+            
+            # 写入 sysctl 配置
+            cat > /etc/sysctl.d/99-vps-toolbox.conf <<EOF
+# VPS Toolbox 网络优化
+net.core.default_qdisc=${qdisc}
+net.ipv4.tcp_congestion_control=${cc_algo}
+net.ipv4.tcp_notsent_lowat = 16384
+EOF
+            
+            # 应用配置
+            sysctl --system >/dev/null 2>&1
+            
+            # 验证
+            local current_cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)
+            local current_qdisc=$(sysctl -n net.core.default_qdisc 2>/dev/null)
+            
+            echo ""
+            echo -e "${GREEN}优化完成!${NC}"
+            echo -e "  TCP 拥塞控制: ${GREEN}${current_cc}${NC}"
+            echo -e "  队列算法: ${GREEN}${current_qdisc}${NC}"
+            echo ""
+            echo -e "${YELLOW}提示: 配置已写入 /etc/sysctl.d/99-vps-toolbox.conf${NC}"
+            echo -e "${YELLOW}重启后依然生效${NC}"
+            ;;
+            
+        5)
+            echo -e "${YELLOW}正在安装 vnStat...${NC}"
+            if command -v apt &>/dev/null; then
+                apt update -qq && apt install -y -qq vnstat 2>/dev/null
+            elif command -v yum &>/dev/null; then
+                yum install -y vnstat 2>/dev/null
+            elif command -v dnf &>/dev/null; then
+                dnf install -y vnstat 2>/dev/null
+            fi
+            
+            if command -v vnstat &>/dev/null; then
+                # 配置 vnStat
+                local main_iface=$(ip route | grep default | awk '{print $5}' | head -1)
+                if [[ -n "$main_iface" ]]; then
+                    systemctl enable vnstat 2>/dev/null || true
+                    systemctl restart vnstat 2>/dev/null || true
+                    echo -e "${GREEN}vnStat 安装完成!${NC}"
+                    echo -e "  监控接口: ${GREEN}${main_iface}${NC}"
+                    echo -e "  查看流量: ${YELLOW}vnstat -i ${main_iface}${NC}"
+                fi
+            else
+                echo -e "${RED}vnStat 安装失败${NC}"
+            fi
+            ;;
+            
+        6)
+            echo -e "${YELLOW}正在优化系统参数...${NC}"
+            
+            cat >> /etc/sysctl.d/99-vps-toolbox.conf <<EOF
+
+# 系统参数优化
+fs.file-max = 65535
+net.core.rmem_max = 67108864
+net.core.wmem_max = 67108864
+net.core.netdev_max_backlog = 250000
+net.core.somaxconn = 4096
+net.ipv4.tcp_syncookies = 1
+net.ipv4.tcp_tw_reuse = 1
+net.ipv4.tcp_fin_timeout = 30
+net.ipv4.tcp_keepalive_time = 1200
+net.ipv4.ip_local_port_range = 10000 65000
+net.ipv4.tcp_max_syn_backlog = 8192
+net.ipv4.tcp_max_tw_buckets = 5000
+net.ipv4.tcp_fastopen = 3
+net.ipv4.tcp_mem = 25600 51200 102400
+net.ipv4.tcp_rmem = 4096 87380 67108864
+net.ipv4.tcp_wmem = 4096 65536 67108864
+net.ipv4.tcp_mtu_probing = 1
+net.ipv4.tcp_slow_start_after_idle = 0
+EOF
+            
+            sysctl --system >/dev/null 2>&1
+            
+            # 优化文件描述符限制
+            cat >> /etc/security/limits.conf <<EOF
+
+# VPS Toolbox 文件描述符优化
+* soft nofile 65535
+* hard nofile 65535
+root soft nofile 65535
+root hard nofile 65535
+EOF
+            
+            echo -e "${GREEN}系统参数优化完成!${NC}"
+            echo -e "${YELLOW}提示: 部分参数需要重新登录或重启后完全生效${NC}"
+            ;;
+            
+        7)
+            return
+            ;;
+            
+        *)
+            warn "无效选择"
+            ;;
+    esac
+    
+    echo ""
+    read -rp "按回车键继续..."
+}
+
+# 一键DD系统功能
+dd_system() {
+    clear
+    echo ""
+    echo -e "${CYAN}============================================================${NC}"
+    echo -e "${CYAN}                    一键重装系统 (DD)${NC}"
+    echo -e "${CYAN}============================================================${NC}"
+    echo ""
+    echo -e "${RED}警告: 此操作将完全抹除当前系统所有数据!${NC}"
+    echo -e "${RED}警告: 请确保已备份重要数据!${NC}"
+    echo ""
+    echo -e "${YELLOW}支持的系统:${NC}"
+    echo ""
+    echo "  1. Debian 12 (推荐)"
+    echo "  2. Debian 11"
+    echo "  3. Ubuntu 24.04 LTS"
+    echo "  4. Ubuntu 22.04 LTS"
+    echo "  5. CentOS Stream 9"
+    echo "  6. Alpine Linux"
+    echo "  7. Windows Server 2022 (实验性)"
+    echo ""
+    echo "  8. 自定义镜像 URL"
+    echo "  9. 返回主菜单"
+    echo ""
+    echo -e "${CYAN}============================================================${NC}"
+    echo ""
+    read -rp "请选择 [1-9]: " dd_choice
+    
+    local image_url=""
+    local distro=""
+    
+    case $dd_choice in
+        1) image_url="https://github.com/veip007/dd/raw/master/Debian_12.img.gz"; distro="Debian 12" ;;
+        2) image_url="https://github.com/veip007/dd/raw/master/Debian_11.img.gz"; distro="Debian 11" ;;
+        3) image_url="https://github.com/veip007/dd/raw/master/Ubuntu_2404.img.gz"; distro="Ubuntu 24.04" ;;
+        4) image_url="https://github.com/veip007/dd/raw/master/Ubuntu_2204.img.gz"; distro="Ubuntu 22.04" ;;
+        5) image_url="https://github.com/veip007/dd/raw/master/CentOS_9_Stream.img.gz"; distro="CentOS Stream 9" ;;
+        6) image_url="https://github.com/veip007/dd/raw/master/Alpine_3_19.img.gz"; distro="Alpine Linux" ;;
+        7) image_url="https://github.com/veip007/dd/raw/master/Windows_Server_2022.img.gz"; distro="Windows Server 2022" ;;
+        8)
+            echo ""
+            read -rp "请输入自定义镜像 URL: " custom_url
+            image_url="$custom_url"
+            distro="自定义系统"
+            ;;
+        9)
+            return
+            ;;
+        *)
+            warn "无效选择"
+            return
+            ;;
+    esac
+    
+    if [[ -z "$image_url" ]]; then
+        return
+    fi
+    
+    echo ""
+    echo -e "${RED}============================================================${NC}"
+    echo -e "${RED}                     最终确认${NC}"
+    echo -e "${RED}============================================================${NC}"
+    echo ""
+    echo -e "目标系统: ${YELLOW}${distro}${NC}"
+    echo -e "镜像地址: ${YELLOW}${image_url}${NC}"
+    echo ""
+    echo -e "${RED}此操作将:${NC}"
+    echo -e "  ${RED}- 删除当前系统所有数据${NC}"
+    echo -e "  ${RED}- 重新安装操作系统${NC}"
+    echo -e "  ${RED}- 所有配置将丢失${NC}"
+    echo ""
+    
+    read -rp "确认重装? 输入 [我确认重装] 继续: " confirm
+    
+    if [[ "$confirm" != "我确认重装" ]]; then
+        echo -e "${YELLOW}已取消重装操作${NC}"
+        read -rp "按回车键继续..."
+        return
+    fi
+    
+    echo ""
+    echo -e "${YELLOW}正在准备重装环境...${NC}"
+    
+    # 安装必要工具
+    if ! command -v wget &>/dev/null; then
+        if command -v apt &>/dev/null; then
+            apt update -qq && apt install -y -qq wget 2>/dev/null
+        elif command -v yum &>/dev/null; then
+            yum install -y wget 2>/dev/null
+        elif command -v dnf &>/dev/null; then
+            dnf install -y wget 2>/dev/null
+        fi
+    fi
+    
+    # 下载并执行 DD 脚本
+    echo -e "${YELLOW}正在下载 DD 脚本...${NC}"
+    cd /tmp
+    
+    # 使用成熟的 DD 脚本 (MoeClub 的 dd 脚本)
+    wget -qO- https://raw.githubusercontent.com/fcurrk/reinstall/master/Network-Reinstall-System-Modify.sh | bash -s -- -dd "$image_url"
+    
+    # 如果上面的脚本失败，尝试备用方案
+    if [[ $? -ne 0 ]]; then
+        echo -e "${YELLOW}主脚本失败，尝试备用方案...${NC}"
+        wget -qO /tmp/InstallNET.sh https://raw.githubusercontent.com/leitbogioro/Tools/master/Linux_reinstall/InstallNET.sh
+        chmod +x /tmp/InstallNET.sh
+        bash /tmp/InstallNET.sh -debian 12
+    fi
+}
+
 show_banner() {
     echo ""
     echo -e "${CYAN}============================================================${NC}"
-    echo -e "${GREEN}           VPS Toolbox - 多功能一键部署工具 v2.5.0${NC}"
+    echo -e "${GREEN}           VPS Toolbox - 多功能一键部署工具 v2.7.0${NC}"
     echo -e "${CYAN}============================================================${NC}"
     echo -e "  ${YELLOW}作者${NC}: Kitaro-Loked"
     echo -e "  ${YELLOW}仓库${NC}: https://github.com/Kitaro-Loked/VPS-Toolbox"
@@ -859,11 +1130,15 @@ show_menu() {
     echo "    6. 安装 VMess + WS + TLS"
     echo "    7. 安装 HTTPS 正向代理"
     echo ""
+    echo -e "  ${YELLOW}[系统优化]${NC}"
+    echo "    8. 网络优化 (BBR/系统参数)"
+    echo "    9. 一键重装系统 (DD)"
+    echo ""
     echo -e "  ${YELLOW}[管理]${NC}"
-    echo "    8. 查看所有配置"
-    echo "    9. 生成订阅链接"
-    echo "    10. 流量统计"
-    echo "    11. 卸载服务"
+    echo "    10. 查看所有配置"
+    echo "    11. 生成订阅链接"
+    echo "    12. 流量统计"
+    echo "    13. 卸载服务"
     echo "    0. 退出脚本"
     echo ""
     echo -e "${CYAN}============================================================${NC}"
@@ -877,7 +1152,7 @@ main() {
     
     while true; do
         show_menu
-        read -rp "请选择操作 [0-11]: " choice
+        read -rp "请选择操作 [0-13]: " choice
         
         case $choice in
             1) setup_ddns ;;
@@ -887,10 +1162,12 @@ main() {
             5) install_shadowsocks ;;
             6) install_vmess ;;
             7) install_https_proxy ;;
-            8) view_config ;;
-            9) show_subscription ;;
-            10) show_traffic_stats ;;
-            11) uninstall_service ;;
+            8) optimize_system ;;
+            9) dd_system ;;
+            10) view_config ;;
+            11) show_subscription ;;
+            12) show_traffic_stats ;;
+            13) uninstall_service ;;
             0)
                 echo -e "${GREEN}感谢使用 VPS Toolbox，再见!${NC}"
                 exit 0
