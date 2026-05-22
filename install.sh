@@ -1,9 +1,5 @@
 #!/bin/bash
 
-# Auto-fix CRLF
-
-sed -i 's/\r$//' "$0" 2>/dev/null || true
-
 # ============================================================
 
 # VPS Toolbox - 一键部署脚本
@@ -79,6 +75,64 @@ check_root() {
     fi
 
 }
+# 检查系统环境
+check_system() {
+    log "检查系统环境..."
+    
+    # 检查操作系统
+    if [[ -f /etc/os-release ]]; then
+        source /etc/os-release 2>/dev/null || true
+        OS=${ID:-unknown}
+        VER=${VERSION_ID:-unknown}
+    elif type lsb_release >/dev/null 2>&1; then
+        OS=$(lsb_release -si | tr '[:upper:]' '[:lower:]')
+        VER=$(lsb_release -sr)
+    elif [[ -f /etc/lsb-release ]]; then
+        source /etc/lsb-release 2>/dev/null || true
+        OS=${DISTRIB_ID:-unknown}
+        VER=${DISTRIB_RELEASE:-unknown}
+    else
+        OS=$(uname -s)
+        VER=$(uname -r)
+    fi
+    
+    # 检查架构
+    ARCH=$(uname -m)
+    case $ARCH in
+        x86_64) ARCH=amd64 ;;
+        aarch64) ARCH=arm64 ;;
+        armv7l) ARCH=arm ;;
+    esac
+    
+    log "系统: $OS $VER, 架构: $ARCH"
+}
+
+# 安装基础依赖
+install_dependencies() {
+    log "安装基础依赖..."
+    
+    local deps="curl wget git unzip jq socat cron dnsutils net-tools iproute2"
+    
+    if command -v apt-get &>/dev/null; then
+        apt-get update >/dev/null 2>&1
+        apt-get install -y $deps >/dev/null 2>&1 || true
+    elif command -v yum &>/dev/null; then
+        yum install -y $deps >/dev/null 2>&1 || true
+    elif command -v dnf &>/dev/null; then
+        dnf install -y $deps >/dev/null 2>&1 || true
+    elif command -v apk &>/dev/null; then
+        apk add --no-cache $deps >/dev/null 2>&1 || true
+    fi
+    
+    # 确保 cron 服务运行
+    if command -v systemctl &>/dev/null; then
+        systemctl enable cron 2>/dev/null || systemctl enable crond 2>/dev/null || true
+        systemctl start cron 2>/dev/null || systemctl start crond 2>/dev/null || true
+    fi
+    
+    log "依赖安装完成"
+}
+
 
 # IPv6-only 环境检测与自动处理
 
@@ -95,7 +149,30 @@ check_ipv6_only() {
 }
 
 # 自动安装 WARP (非交互式，用于 IPv6-only 环境)
-auto_setup_warp() {
+# DDNS 域名申请与管理
+setup_ddns() {
+    clear
+    echo ""
+    echo -e "${CYAN}============================================================${NC}"
+    echo -e "${CYAN}              DDNS 域名申请与管理${NC}"
+    echo -e "${CYAN}============================================================${NC}"
+    echo ""
+    echo -e "${YELLOW}DDNS 功能暂未实现，请使用以下方式:${NC}"
+    echo ""
+    echo "  1. Cloudflare DNS API + acme.sh 自动续签"
+    echo "  2. DuckDNS (免费)"
+    echo "  3. No-IP (免费)"
+    echo ""
+    echo -e "${YELLOW}推荐使用 Cloudflare + acme.sh 组合:${NC}"
+    echo ""
+    echo "  curl https://get.acme.sh | sh"
+    echo "  ~/.acme.sh/acme.sh --register-account -m your@email.com"
+    echo "  ~/.acme.sh/acme.sh --issue --dns dns_cf -d your.domain.com"
+    echo ""
+    read -rp "按回车键继续..."
+}
+
+setup_warp() {
     clear
     echo ""
     echo -e "${CYAN}============================================================${NC}"
@@ -213,7 +290,7 @@ install_vless() {
 
     log "下载并执行 yeahwu/v2ray-wss reality.sh..."
 
-    cd /tmp
+    cd /tmp 2>/dev/null || true
 
     wget -q https://raw.githubusercontent.com/yeahwu/v2ray-wss/main/reality.sh 2>/dev/null ||     curl -sL https://raw.githubusercontent.com/yeahwu/v2ray-wss/main/reality.sh -o reality.sh
 
@@ -245,7 +322,7 @@ install_hysteria2() {
 
     log "下载并执行 yeahwu/v2ray-wss hy2.sh..."
 
-    cd /tmp
+    cd /tmp 2>/dev/null || true
 
     wget -q https://raw.githubusercontent.com/yeahwu/v2ray-wss/main/hy2.sh 2>/dev/null ||     curl -sL https://raw.githubusercontent.com/yeahwu/v2ray-wss/main/hy2.sh -o hy2.sh
 
@@ -277,7 +354,7 @@ install_shadowsocks() {
 
     log "下载并执行 yeahwu/v2ray-wss ss-rust.sh..."
 
-    cd /tmp
+    cd /tmp 2>/dev/null || true
 
     wget -q https://raw.githubusercontent.com/yeahwu/v2ray-wss/main/ss-rust.sh 2>/dev/null ||     curl -sL https://raw.githubusercontent.com/yeahwu/v2ray-wss/main/ss-rust.sh -o ss-rust.sh
 
@@ -309,7 +386,7 @@ install_vmess() {
 
     log "下载并执行 yeahwu/v2ray-wss tcp-wss.sh..."
 
-    cd /tmp
+    cd /tmp 2>/dev/null || true
 
     wget -q https://raw.githubusercontent.com/yeahwu/v2ray-wss/main/tcp-wss.sh 2>/dev/null ||     curl -sL https://raw.githubusercontent.com/yeahwu/v2ray-wss/main/tcp-wss.sh -o tcp-wss.sh
 
@@ -341,7 +418,7 @@ install_https_proxy() {
 
     log "下载并执行 yeahwu/v2ray-wss https.sh..."
 
-    cd /tmp
+    cd /tmp 2>/dev/null || true
 
     wget -q https://raw.githubusercontent.com/yeahwu/v2ray-wss/main/https.sh 2>/dev/null ||     curl -sL https://raw.githubusercontent.com/yeahwu/v2ray-wss/main/https.sh -o https.sh
 
@@ -1595,7 +1672,7 @@ dd_system() {
 
     echo -e "${YELLOW}正在下载 DD 脚本...${NC}"
 
-    cd /tmp
+    cd /tmp 2>/dev/null || true
 
     
 
@@ -1675,6 +1752,16 @@ speed_test() {
 
                 # 使用官方安装脚本
                 local install_script="/tmp/speedtest-install.sh"
+                # 检测包管理器
+                local PKG_MANAGER=""
+                if command -v apt &>/dev/null; then
+                    PKG_MANAGER="apt"
+                elif command -v yum &>/dev/null; then
+                    PKG_MANAGER="yum"
+                elif command -v dnf &>/dev/null; then
+                    PKG_MANAGER="dnf"
+                fi
+                
                 if [[ "$PKG_MANAGER" == "apt" ]]; then
                     wget -qO "$install_script" https://install.speedtest.net/app/cli/install.deb.sh 2>/dev/null || \
                     curl -sL https://install.speedtest.net/app/cli/install.deb.sh -o "$install_script" 2>/dev/null || true
@@ -1783,7 +1870,7 @@ speed_test() {
 
             if ! command -v besttrace &>/dev/null; then
 
-                cd /tmp
+                cd /tmp 2>/dev/null || true
 
                 wget -qO besttrace4linux.zip "https://cdn.ipip.net/17mon/besttrace4linux.zip" 2>/dev/null || \
 
@@ -2689,7 +2776,7 @@ setup_tgbot() {
 
         echo -e "${GREEN}Bot 已配置${NC}"
 
-        source "$bot_config"
+        source "$bot_config" 2>/dev/null || true 2>/dev/null || true
 
         echo -e "  Bot Token: ${TG_BOT_TOKEN:0:20}..."
 
@@ -2836,7 +2923,7 @@ EOF
 
             if [[ -f "$bot_config" ]]; then
 
-                source "$bot_config"
+                source "$bot_config" 2>/dev/null || true 2>/dev/null || true
 
                 local test_msg=$(cat <<'EOF'
 🧪 *测试消息*
@@ -2955,7 +3042,7 @@ send_tg_message() {
 
     
 
-    source "$bot_config"
+    source "$bot_config" 2>/dev/null || true
 
     
 
@@ -2997,7 +3084,7 @@ send_tg_notify() {
 
     [[ ! -f "$bot_config" ]] && return 1
 
-    source "$bot_config"
+    source "$bot_config" 2>/dev/null || true
 
     [[ -z "$TG_BOT_TOKEN" || -z "$TG_CHAT_ID" ]] && return 1
 
@@ -3040,7 +3127,7 @@ start_tgbot_service() {
 
     
 
-    source "$bot_config"
+    source "$bot_config" 2>/dev/null || true
 
     
 
@@ -3052,7 +3139,7 @@ start_tgbot_service() {
 
 # VPS Toolbox Telegram Bot
 
-source /etc/vps-toolbox/tgbot.conf
+source /etc/vps-toolbox/tgbot.conf 2>/dev/null || true
 
 # 发送消息函数
 
@@ -4003,7 +4090,7 @@ push_sub_to_telegram() {
 
     
 
-    source "$bot_config"
+    source "$bot_config" 2>/dev/null || true
 
     
 
@@ -4182,7 +4269,7 @@ BOT_CONFIG="/etc/vps-toolbox/tgbot.conf"
 
 [[ ! -f "$BOT_CONFIG" ]] && exit 0
 
-source "$BOT_CONFIG"
+source "$BOT_CONFIG" 2>/dev/null || true
 
 [[ -z "$TG_BOT_TOKEN" || -z "$TG_CHAT_ID" ]] && exit 0
 
@@ -5048,7 +5135,7 @@ check_vps_health() {
                 # 发送 Telegram 告警
                 local bot_config="/etc/vps-toolbox/tgbot.conf"
                 if [[ -f "$bot_config" ]]; then
-                    source "$bot_config"
+                    source "$bot_config" 2>/dev/null || true 2>/dev/null || true
                     if [[ -n "$TG_BOT_TOKEN" && -n "$TG_CHAT_ID" ]]; then
                         local msg=$(cat <<EOF
 🚨 *节点故障告警*
@@ -5185,7 +5272,7 @@ while IFS='|' read -r name addr proto weight status; do
             # Telegram 告警
             bot_config="/etc/vps-toolbox/tgbot.conf"
             if [[ -f "$bot_config" ]]; then
-                source "$bot_config"
+                source "$bot_config" 2>/dev/null || true 2>/dev/null || true
                 if [[ -n "$TG_BOT_TOKEN" && -n "$TG_CHAT_ID" ]]; then
                     msg="🚨 *节点故障告警*\n\n节点: ${name}\n地址: ${addr}\n时间: $(date '+%Y-%m-%d %H:%M:%S')"
                     curl -s -X POST "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" \
@@ -7015,7 +7102,13 @@ main() {
 
     check_system
 
-    init_ipv6_environment
+    # IPv6-only 环境检测
+    if check_ipv6_only; then
+        IS_IPV6_ONLY=true
+        log "检测到 IPv6-only 环境"
+    else
+        IS_IPV6_ONLY=false
+    fi
 
     record_usage
 
