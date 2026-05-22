@@ -2152,7 +2152,7 @@ speed_test() {
 
     echo ""
 
-    
+
 
     echo -e "${YELLOW}请选择测速方式:${NC}"
 
@@ -2178,7 +2178,7 @@ speed_test() {
 
     read -rp "请选择 [1-6]: " speed_choice
 
-    
+
 
     case $speed_choice in
 
@@ -2188,13 +2188,21 @@ speed_test() {
 
             if ! command -v speedtest &>/dev/null; then
 
-                curl -sL https://packagecloud.io/install/repositories/ookla/speedtest/script.deb.sh | bash 2>/dev/null || true
-
-                apt install -y speedtest 2>/dev/null || yum install -y speedtest 2>/dev/null || true
-
+                # 使用官方安装脚本
+                local install_script="/tmp/speedtest-install.sh"
+                if [[ "$PKG_MANAGER" == "apt" ]]; then
+                    wget -qO "$install_script" https://install.speedtest.net/app/cli/install.deb.sh 2>/dev/null || \
+                    curl -sL https://install.speedtest.net/app/cli/install.deb.sh -o "$install_script" 2>/dev/null || true
+                    [[ -f "$install_script" ]] && bash "$install_script" 2>/dev/null && apt install -y speedtest 2>/dev/null || true
+                else
+                    wget -qO "$install_script" https://install.speedtest.net/app/cli/install.rpm.sh 2>/dev/null || \
+                    curl -sL https://install.speedtest.net/app/cli/install.rpm.sh -o "$install_script" 2>/dev/null || true
+                    [[ -f "$install_script" ]] && bash "$install_script" 2>/dev/null && \
+                    (yum install -y speedtest 2>/dev/null || dnf install -y speedtest 2>/dev/null) || true
+                fi
             fi
 
-            
+
 
             if command -v speedtest &>/dev/null; then
 
@@ -2204,53 +2212,36 @@ speed_test() {
 
             else
 
-                # 备用方案
+                # 备用方案: 直接下载官方二进制
+                echo -e "${YELLOW}使用备用方案 (官方 Speedtest CLI)...${NC}"
 
-                echo -e "${YELLOW}使用备用方案 (speedtest-go)...${NC}"
+                local arch=$(uname -m)
+                local speedtest_url=""
+                case "$arch" in
+                    x86_64) speedtest_url="https://install.speedtest.net/app/cli/ookla-speedtest-1.2.0-linux-x86_64.tgz" ;;
+                    aarch64) speedtest_url="https://install.speedtest.net/app/cli/ookla-speedtest-1.2.0-linux-aarch64.tgz" ;;
+                    *) speedtest_url="https://install.speedtest.net/app/cli/ookla-speedtest-1.2.0-linux-x86_64.tgz" ;;
+                esac
 
-                if [[ ! -f /tmp/speedtest-go ]]; then
+                wget -qO /tmp/speedtest.tgz "$speedtest_url" 2>/dev/null || \
+                curl -sL "$speedtest_url" -o /tmp/speedtest.tgz 2>/dev/null || true
 
-                    local arch=$(uname -m)
-
-                    local go_arch=""
-
-                    case $arch in
-
-                        x86_64) go_arch="x86_64" ;;
-
-                        aarch64) go_arch="arm64" ;;
-
-                        *) go_arch="x86_64" ;;
-
-                    esac
-
-                    wget -qO /tmp/speedtest-go.tar.gz "https://github.com/showwin/speedtest-go/releases/latest/download/speedtest-go_${go_arch}.tar.gz" 2>/dev/null || true
-
-                    if [[ -f /tmp/speedtest-go.tar.gz ]]; then
-
-                        tar -xzf /tmp/speedtest-go.tar.gz -C /tmp 2>/dev/null
-
-                        chmod +x /tmp/speedtest-go 2>/dev/null
-
-                    fi
-
+                if [[ -f /tmp/speedtest.tgz ]]; then
+                    tar -xzf /tmp/speedtest.tgz -C /tmp 2>/dev/null
+                    chmod +x /tmp/speedtest 2>/dev/null
                 fi
 
-                if [[ -x /tmp/speedtest-go ]]; then
-
-                    /tmp/speedtest-go
-
+                if [[ -x /tmp/speedtest ]]; then
+                    echo -e "${GREEN}开始测速...${NC}"
+                    /tmp/speedtest --accept-license --accept-gdpr
                 else
-
                     echo -e "${RED}测速工具安装失败${NC}"
-
                 fi
-
             fi
 
             ;;
 
-            
+
 
         2)
 
@@ -2258,10 +2249,9 @@ speed_test() {
 
             echo ""
 
-            
+
 
             # 使用 superspeed 脚本
-
             echo -e "${GREEN}[电信节点]${NC}"
 
             bash <(curl -sL https://raw.githubusercontent.com/oooldking/script/master/superspeed.sh) 2>/dev/null || \
@@ -2270,43 +2260,37 @@ speed_test() {
 
             echo -e "${YELLOW}三网测速脚本暂时不可用，尝试单节点测试...${NC}"
 
-            
 
-            # 备用：直接测几个国内节点
 
-            if [[ ! -f /tmp/speedtest-go ]]; then
+            # 备用：使用 speedtest-go 测试国内节点
+            local arch=$(uname -m)
+            local go_arch="x86_64"
+            [[ "$arch" == "aarch64" ]] && go_arch="arm64"
 
-                local arch=$(uname -m)
+            # 使用固定版本号
+            local version_num="1.7.10"
 
-                local go_arch="x86_64"
+            local go_url="https://github.com/showwin/speedtest-go/releases/download/v${version_num}/speedtest-go_${version_num}_Linux_${go_arch}.tar.gz"
 
-                [[ "$arch" == "aarch64" ]] && go_arch="arm64"
+            wget -qO /tmp/speedtest-go.tar.gz "$go_url" 2>/dev/null || \
+            curl -sL "$go_url" -o /tmp/speedtest-go.tar.gz 2>/dev/null || true
 
-                wget -qO /tmp/speedtest-go.tar.gz "https://github.com/showwin/speedtest-go/releases/latest/download/speedtest-go_${go_arch}.tar.gz" 2>/dev/null || true
-
-                [[ -f /tmp/speedtest-go.tar.gz ]] && tar -xzf /tmp/speedtest-go.tar.gz -C /tmp 2>/dev/null && chmod +x /tmp/speedtest-go 2>/dev/null
-
+            if [[ -f /tmp/speedtest-go.tar.gz ]]; then
+                tar -xzf /tmp/speedtest-go.tar.gz -C /tmp 2>/dev/null
+                chmod +x /tmp/speedtest-go 2>/dev/null
             fi
 
-            
-
             if [[ -x /tmp/speedtest-go ]]; then
-
                 echo ""
-
                 echo -e "${GREEN}使用 speedtest-go 测试附近节点...${NC}"
-
                 /tmp/speedtest-go --server 5315 2>/dev/null || true   # 上海电信
-
                 /tmp/speedtest-go --server 5505 2>/dev/null || true   # 北京联通
-
                 /tmp/speedtest-go --server 4617 2>/dev/null || true   # 深圳移动
-
             fi
 
             ;;
 
-            
+
 
         3)
 
@@ -2318,7 +2302,7 @@ speed_test() {
 
                 wget -qO besttrace4linux.zip "https://cdn.ipip.net/17mon/besttrace4linux.zip" 2>/dev/null || \
 
-                wget -qO besttrace4linux.zip "https://github.com/rennzhang/BestTrace/raw/main/besttrace4linux.zip" 2>/dev/null || true
+                curl -sL "https://cdn.ipip.net/17mon/besttrace4linux.zip" -o besttrace4linux.zip 2>/dev/null || true
 
                 if [[ -f besttrace4linux.zip ]]; then
 
@@ -2332,7 +2316,7 @@ speed_test() {
 
             fi
 
-            
+
 
             if command -v besttrace &>/dev/null; then
 
@@ -2364,7 +2348,7 @@ speed_test() {
 
             ;;
 
-            
+
 
         4)
 
@@ -2380,7 +2364,7 @@ speed_test() {
 
             fi
 
-            
+
 
             if command -v nexttrace &>/dev/null; then
 
@@ -2396,7 +2380,7 @@ speed_test() {
 
             ;;
 
-            
+
 
         5)
 
@@ -2408,7 +2392,7 @@ speed_test() {
 
             fi
 
-            
+
 
             if command -v iperf3 &>/dev/null; then
 
@@ -2438,7 +2422,7 @@ speed_test() {
 
             ;;
 
-            
+
 
         6)
 
@@ -2446,7 +2430,7 @@ speed_test() {
 
             ;;
 
-            
+
 
         *)
 
@@ -2456,7 +2440,7 @@ speed_test() {
 
     esac
 
-    
+
 
     echo ""
 
