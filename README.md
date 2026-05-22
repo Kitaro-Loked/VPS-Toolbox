@@ -48,7 +48,7 @@
 
 - **官方 Cloudflare WARP** - 完整的 WARP 客户端
 
-- **WireGuard 模式 (wgcf)** - 轻量级 WireGuard 实现
+- IPv6-only 环境自动安装 WARP 提供 IPv4 出口
 
 - 一键启动/停止/查看状态
 
@@ -69,8 +69,6 @@
 | **Shadowsocks** | 轻量简单，兼容性好 | ⭐⭐⭐⭐ |
 
 | **VMess + WebSocket** | 成熟稳定，支持 CDN | ⭐⭐⭐⭐ |
-
-| **Trojan + WebSocket** | 伪装 HTTPS 流量 | ⭐⭐⭐⭐ |
 
 
 
@@ -108,7 +106,7 @@
 
 - **权限**: Root 用户
 
-- **网络**: 需要公网 IP (IPv4)
+- **网络**: 需要公网 IP (IPv4 或 IPv6，IPv6-only 环境会自动安装 WARP)
 
 
 
@@ -174,11 +172,9 @@ chmod +x install.sh
 
 ╔══════════════════════════════════════════════════════════════╗
 
-║           VPS Toolbox - 多功能一键部署工具                   ║
+║           VPS Toolbox - 多功能一键部署工具 v1.0              ║
 
 ╠══════════════════════════════════════════════════════════════╣
-
-║                                                              ║
 
 ║  【DDNS & 网络】                                             ║
 
@@ -190,23 +186,73 @@ chmod +x install.sh
 
 ║  【代理协议】                                                ║
 
-║   3. 安装 Vless + Reality (推荐)                             ║
+║   3. 安装 Vless + Reality                                    ║
 
-║   4. 安装 Hysteria2 (推荐)                                   ║
+║   4. 安装 Hysteria2                                          ║
 
-║   5. 安装 Shadowsocks                                        ║
+║   5. 安装 Shadowsocks-rust                                   ║
 
-║   6. 安装 VMess + WebSocket                                  ║
+║   6. 安装 VMess + WS + TLS                                   ║
 
-║   7. 安装 Trojan + WebSocket                                 ║
+║   7. 安装 HTTPS 正向代理                                     ║
+
+║                                                              ║
+
+║  【系统优化】                                                ║
+
+║   8. 网络优化 (BBR/系统参数)                                 ║
+
+║   9. 一键重装系统 (DD)                                       ║
+
+║                                                              ║
+
+║  【工具】                                                    ║
+
+║  10. 网络测速                                                ║
+
+║  11. SSL 证书管理                                            ║
+
+║  12. 端口占用一览                                            ║
+
+║  13. Telegram Bot 配置                                       ║
+
+║                                                              ║
+
+║  【节点订阅】                                                ║
+
+║  14. 节点订阅管理                                            ║
+
+║  15. 推送订阅到 Telegram                                     ║
+
+║  16. 启动 HTTP 订阅服务                                      ║
+
+║                                                              ║
+
+║  【高级】                                                    ║
+
+║  17. 多节点负载均衡                                          ║
+
+║  18. 安全配置审计                                            ║
+
+║                                                              ║
+
+║  【伪装网站】                                                ║
+
+║  19. 部署伪装网站                                            ║
 
 ║                                                              ║
 
 ║  【管理】                                                    ║
 
-║   8. 查看所有配置                                            ║
+║  20. 查看所有配置                                            ║
 
-║   9. 卸载服务                                                ║
+║  21. 生成订阅链接                                            ║
+
+║  22. 流量统计                                                ║
+
+║  23. 使用统计详情                                            ║
+
+║  24. 卸载服务                                                ║
 
 ║   0. 退出脚本                                                ║
 
@@ -250,11 +296,11 @@ chmod +x install.sh
 
 
 
-- 支持官方客户端和 WireGuard 两种模式
+- 支持官方 Cloudflare WARP 客户端
+
+- IPv6-only 环境自动安装
 
 - 一键连接/断开
-
-- 自动配置为系统代理出口
 
 
 
@@ -308,164 +354,6 @@ chmod +x install.sh
 
 
 
-## 📁 文件结构
-
-
-
-```
-
-/etc/vps-toolbox/
-
-├── ddns.conf           # DDNS 配置
-
-├── update-ddns.sh      # DDNS 自动更新脚本
-
-├── vless-info.txt      # Vless 配置信息
-
-├── vless-link.txt      # Vless 分享链接
-
-├── vless-qr.png        # Vless 二维码
-
-├── hysteria2-info.txt  # Hysteria2 配置信息
-
-├── hysteria2-link.txt  # Hysteria2 分享链接
-
-├── hysteria2-qr.png    # Hysteria2 二维码
-
-├── ss-info.txt         # Shadowsocks 配置信息
-
-├── ss-link.txt         # Shadowsocks 分享链接
-
-├── ss-qr.png           # Shadowsocks 二维码
-
-├── vmess-info.txt      # VMess 配置信息
-
-├── vmess-link.txt      # VMess 分享链接
-
-├── vmess-qr.png        # VMess 二维码
-
-├── trojan-info.txt     # Trojan 配置信息
-
-├── trojan-link.txt     # Trojan 分享链接
-
-└── trojan-qr.png       # Trojan 二维码
-
-```
-
-
-
----
-
-
-
-## 🔧 配置示例
-
-
-
-### Vless + Reality
-
-
-
-```
-
-协议: Vless + Reality
-
-服务器地址: your-domain.com
-
-端口: 443
-
-UUID: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-
-流控: xtls-rprx-vision
-
-传输协议: tcp
-
-安全: reality
-
-Public Key: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-
-Short ID: a1b2c3d4
-
-SNI: www.cloudflare.com
-
-```
-
-
-
-### Hysteria2
-
-
-
-```
-
-服务器地址: your-domain.com
-
-端口: 443
-
-密码: your-strong-password
-
-传输协议: udp
-
-TLS: 自签名证书
-
-SNI: your-domain.com
-
-```
-
-
-
----
-
-
-
-## 🛡️ 安全特性
-
-
-
-- ✅ 自动 SSL 证书申请和续签
-
-- ✅ 随机端口生成 (10000-65000)
-
-- ✅ 强密码/UUID 自动生成
-
-- ✅ Reality 协议抗检测
-
-- ✅ 证书自动续期定时任务
-
-
-
----
-
-
-
-## 🔄 自动续签机制
-
-
-
-### SSL 证书
-
-- 使用 `acme.sh` 管理证书
-
-- 每天凌晨 3 点自动检查续签
-
-- 续签后自动重启相关服务
-
-
-
-### DDNS
-
-- 每 5 分钟检测公网 IP 变化
-
-- IP 变化时自动更新 DNS 记录
-
-- 支持 Cloudflare/DuckDNS/No-IP
-
-
-
----
-
-
-
 ## ❓ 常见问题
 
 
@@ -504,37 +392,11 @@ A: 使用 `systemctl status xray` 或对应的服务名称
 
 
 
-## 📝 更新日志
+## 📝 版本
 
-
-
-### v1.0.0 (2024-XX-XX)
-
-- 🎉 初始版本发布
-
-- ✨ 支持 Cloudflare/DuckDNS/No-IP DDNS
-
-- ✨ 支持 WARP 官方客户端和 WireGuard 模式
-
-- ✨ 支持 Vless + Reality
-
-- ✨ 支持 Hysteria2
-
-- ✨ 支持 Shadowsocks
-
-- ✨ 支持 VMess + WebSocket
-
-- ✨ 支持 Trojan + WebSocket
-
-- ✨ 自动 SSL 证书申请和续签
-
-- ✨ 自动 DDNS IP 更新
-
-
+当前版本: **v1.0**
 
 ---
-
-
 
 ## 🤝 贡献
 
@@ -606,31 +468,3 @@ A: 使用 `systemctl status xray` 或对应的服务名称
 
 </p>
 
-
-
----
-
-## 💡 未来可能添加的功能
-
-> 以下功能正在评估或规划中，欢迎提 Issue 建议：
-
-### 高优先级
-- [ ] **多用户管理** - 为同一协议添加多个 UUID/密码
-- [ ] **流量统计** - 基于 v2ray/xray API 的实时流量监控
-- [ ] **自动更新** - 检测 yeahwu 脚本更新并提示
-- [ ] **端口管理** - 统一查看/修改所有协议端口
-- [ ] **防火墙管理** - 一键开放/关闭端口 (iptables/nftables/ufw)
-
-### 中优先级
-- [ ] **证书管理** - 查看/续签/更换 SSL 证书
-- [ ] **日志查看** - 实时查看各协议日志
-- [ ] **备份恢复** - 导出/导入所有配置
-- [ ] **BBR/网络优化** - 一键开启 BBR、锐速等加速
-- [ ] **Docker 部署** - 提供 Docker Compose 版本
-
-### 低优先级 / 脑洞
-- [ ] **Telegram Bot** - 通过 Bot 远程管理节点
-- [ ] **Web 面板** - 浏览器图形化管理界面
-- [ ] **多服务器管理** - 批量管理多台 VPS
-- [ ] **节点测速** - 集成 speedtest / iperf3
-- [ ] **自动切换** - 节点故障自动切换备用
