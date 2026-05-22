@@ -14,7 +14,7 @@ sed -i 's/\r$//' "$0" 2>/dev/null || true
 
 # 仓库: https://github.com/Kitaro-Loked/VPS-Toolbox
 
-# 版本: 3.2.0
+# 版本: 3.3.0
 
 # 致谢: 协议安装脚本全部来自 yeahwu/v2ray-wss
 
@@ -5854,7 +5854,7 @@ check_cert_expiry() {
     local warn_count=0
     
     # 检查 acme.sh 证书
-    for cert in /root/.acme.sh/*/*.cer /home/*/.acme.sh/*/*.cer 2>/dev/null; do
+    for cert in /root/.acme.sh/*/*.cer /home/*/.acme.sh/*/*.cer; do
         [[ ! -f "$cert" ]] && continue
         certs_found=true
         
@@ -5874,7 +5874,7 @@ check_cert_expiry() {
     done
     
     # 检查 letsencrypt
-    for cert in /etc/letsencrypt/live/*/cert.pem 2>/dev/null; do
+    for cert in /etc/letsencrypt/live/*/cert.pem; do
         [[ ! -f "$cert" ]] && continue
         certs_found=true
         
@@ -6188,13 +6188,1192 @@ security_audit_menu() {
     done
 }
 
+# 一键部署伪装网站功能
+# 部署静态网站作为代理的伪装层，让服务器看起来像正常网站
+
+WEBSITE_DIR="/var/www/vps-toolbox-site"
+WEBSITE_NGINX="/etc/nginx/conf.d/vps-toolbox-site.conf"
+WEBSITE_CADDY="/etc/caddy/vps-toolbox-site.conf"
+
+# 初始化网站目录
+init_website() {
+    mkdir -p "$WEBSITE_DIR"
+    mkdir -p "$WEBSITE_DIR/images"
+    mkdir -p "$WEBSITE_DIR/css"
+    mkdir -p "$WEBSITE_DIR/js"
+}
+
+# 生成伪装网站内容
+generate_website_content() {
+    local site_type="$1"
+    local domain="$2"
+    
+    init_website
+    
+    case "$site_type" in
+        blog)
+            generate_blog_template "$domain"
+            ;;
+        gallery)
+            generate_gallery_template "$domain"
+            ;;
+        portfolio)
+            generate_portfolio_template "$domain"
+            ;;
+        docs)
+            generate_docs_template "$domain"
+            ;;
+        *)
+            generate_blog_template "$domain"
+            ;;
+    esac
+    
+    # 生成 robots.txt
+    cat > "$WEBSITE_DIR/robots.txt" <<EOF
+User-agent: *
+Allow: /
+Sitemap: https://${domain}/sitemap.xml
+EOF
+    
+    # 生成 sitemap.xml
+    cat > "$WEBSITE_DIR/sitemap.xml" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+    <url>
+        <loc>https://${domain}/</loc>
+        <lastmod>$(date +%Y-%m-%d)</lastmod>
+        <changefreq>daily</changefreq>
+        <priority>1.0</priority>
+    </url>
+</urlset>
+EOF
+    
+    # 生成 favicon
+    generate_favicon
+}
+
+# 生成博客模板
+generate_blog_template() {
+    local domain="$1"
+    local title="$(hostname) Blog"
+    
+    cat > "$WEBSITE_DIR/index.html" <<HTML
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${title}</title>
+    <meta name="description" content="个人技术博客，分享生活与技术的点滴">
+    <link rel="stylesheet" href="/css/style.css">
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
+</head>
+<body>
+    <header>
+        <nav>
+            <div class="logo">${title}</div>
+            <ul>
+                <li><a href="/">首页</a></li>
+                <li><a href="/about.html">关于</a></li>
+                <li><a href="/archive.html">归档</a></li>
+            </ul>
+        </nav>
+    </header>
+    
+    <main>
+        <article class="post">
+            <h1>欢迎来到我的博客</h1>
+            <div class="meta">发布于 $(date +%Y-%m-%d) | 分类: 生活</div>
+            <p>这是一个记录技术学习和生活的个人博客。在这里，我会分享一些编程心得、服务器运维经验，以及生活中的点滴感悟。</p>
+            <p>博客使用静态站点生成器构建，部署在 ${domain} 上。</p>
+            <h2>最近更新</h2>
+            <ul>
+                <li><a href="#">$(date +%Y-%m-%d) - 服务器性能优化笔记</a></li>
+                <li><a href="#">$(date -d '1 day ago' +%Y-%m-%d) - Docker 容器化实践</a></li>
+                <li><a href="#">$(date -d '2 days ago' +%Y-%m-%d) - Nginx 配置技巧分享</a></li>
+                <li><a href="#">$(date -d '3 days ago' +%Y-%m-%d) - Linux 系统调优心得</a></li>
+            </ul>
+        </article>
+        
+        <aside class="sidebar">
+            <div class="widget">
+                <h3>关于我</h3>
+                <p>热爱技术的开发者，喜欢折腾服务器和网络。</p>
+            </div>
+            <div class="widget">
+                <h3>标签云</h3>
+                <div class="tags">
+                    <span class="tag">Linux</span>
+                    <span class="tag">Nginx</span>
+                    <span class="tag">Docker</span>
+                    <span class="tag">Python</span>
+                    <span class="tag">网络安全</span>
+                </div>
+            </div>
+        </aside>
+    </main>
+    
+    <footer>
+        <p>&copy; $(date +%Y) ${title}. All rights reserved.</p>
+        <p>Powered by VPS Toolbox</p>
+    </footer>
+</body>
+</html>
+HTML
+    
+    # 生成关于页面
+    cat > "$WEBSITE_DIR/about.html" <<HTML
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>关于 - ${title}</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <header>
+        <nav>
+            <div class="logo">${title}</div>
+            <ul>
+                <li><a href="/">首页</a></li>
+                <li><a href="/about.html">关于</a></li>
+                <li><a href="/archive.html">归档</a></li>
+            </ul>
+        </nav>
+    </header>
+    
+    <main>
+        <article class="post">
+            <h1>关于我</h1>
+            <p>你好，我是一名热爱技术的开发者。</p>
+            <p>这个博客用于记录我的技术学习和生活感悟。</p>
+            <h2>联系方式</h2>
+            <p>Email: admin@${domain}</p>
+            <p>GitHub: https://github.com/tech-blogger</p>
+        </article>
+    </main>
+    
+    <footer>
+        <p>&copy; $(date +%Y) ${title}. All rights reserved.</p>
+    </footer>
+</body>
+</html>
+HTML
+    
+    # 生成 CSS
+    generate_css
+}
+
+# 生成图库模板
+generate_gallery_template() {
+    local domain="$1"
+    local title="$(hostname) Gallery"
+    
+    cat > "$WEBSITE_DIR/index.html" <<HTML
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${title}</title>
+    <meta name="description" content="个人摄影作品分享">
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <header>
+        <nav>
+            <div class="logo">${title}</div>
+            <ul>
+                <li><a href="/">首页</a></li>
+                <li><a href="/about.html">关于</a></li>
+            </ul>
+        </nav>
+    </header>
+    
+    <main>
+        <h1>我的摄影集</h1>
+        <p class="subtitle">记录生活中的美好瞬间</p>
+        
+        <div class="gallery">
+            <div class="gallery-item">
+                <div class="placeholder" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+                    <span>风景摄影</span>
+                </div>
+                <p>自然风光</p>
+            </div>
+            <div class="gallery-item">
+                <div class="placeholder" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">
+                    <span>城市街拍</span>
+                </div>
+                <p>城市印象</p>
+            </div>
+            <div class="gallery-item">
+                <div class="placeholder" style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);">
+                    <span>人像摄影</span>
+                </div>
+                <p>人物纪实</p>
+            </div>
+            <div class="gallery-item">
+                <div class="placeholder" style="background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);">
+                    <span>美食记录</span>
+                </div>
+                <p>美食探店</p>
+            </div>
+            <div class="gallery-item">
+                <div class="placeholder" style="background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);">
+                    <span>旅行日记</span>
+                </div>
+                <p>旅途风景</p>
+            </div>
+            <div class="gallery-item">
+                <div class="placeholder" style="background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%);">
+                    <span>生活随拍</span>
+                </div>
+                <p>日常记录</p>
+            </div>
+        </div>
+    </main>
+    
+    <footer>
+        <p>&copy; $(date +%Y) ${title}. All rights reserved.</p>
+    </footer>
+</body>
+</html>
+HTML
+    
+    generate_css
+}
+
+# 生成作品集模板
+generate_portfolio_template() {
+    local domain="$1"
+    local title="$(hostname) Portfolio"
+    
+    cat > "$WEBSITE_DIR/index.html" <<HTML
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${title}</title>
+    <meta name="description" content="个人作品集，展示项目和技术能力">
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <header class="hero">
+        <div class="hero-content">
+            <h1>全栈开发者</h1>
+            <p>热爱技术，专注于构建高性能 Web 应用</p>
+            <div class="skills">
+                <span class="skill">Linux</span>
+                <span class="skill">Nginx</span>
+                <span class="skill">Docker</span>
+                <span class="skill">Python</span>
+                <span class="skill">Go</span>
+                <span class="skill">React</span>
+            </div>
+        </div>
+    </header>
+    
+    <main>
+        <section class="projects">
+            <h2>项目展示</h2>
+            <div class="project-grid">
+                <div class="project-card">
+                    <h3>高性能代理服务</h3>
+                    <p>基于 Xray 的高性能代理解决方案，支持多种协议。</p>
+                    <div class="tech-tags">
+                        <span>Go</span>
+                        <span>WebSocket</span>
+                        <span>TLS</span>
+                    </div>
+                </div>
+                <div class="project-card">
+                    <h3>自动化运维平台</h3>
+                    <p>服务器自动化管理和监控平台，支持批量操作。</p>
+                    <div class="tech-tags">
+                        <span>Python</span>
+                        <span>Ansible</span>
+                        <span>Prometheus</span>
+                    </div>
+                </div>
+                <div class="project-card">
+                    <h3>个人博客系统</h3>
+                    <p>基于静态生成的博客系统，支持 Markdown。</p>
+                    <div class="tech-tags">
+                        <span>Hugo</span>
+                        <span>Nginx</span>
+                        <span>CDN</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+    
+    <footer>
+        <p>&copy; $(date +%Y) ${title}. All rights reserved.</p>
+    </footer>
+</body>
+</html>
+HTML
+    
+    generate_css
+}
+
+# 生成文档模板
+generate_docs_template() {
+    local domain="$1"
+    local title="$(hostname) Docs"
+    
+    cat > "$WEBSITE_DIR/index.html" <<HTML
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${title}</title>
+    <meta name="description" content="技术文档和教程">
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <header>
+        <nav>
+            <div class="logo">${title}</div>
+            <ul>
+                <li><a href="/">首页</a></li>
+                <li><a href="/guide.html">指南</a></li>
+                <li><a href="/api.html">API</a></li>
+            </ul>
+        </nav>
+    </header>
+    
+    <main>
+        <div class="docs-layout">
+            <aside class="sidebar">
+                <h3>文档目录</h3>
+                <ul>
+                    <li><a href="#">快速开始</a></li>
+                    <li><a href="#">安装指南</a></li>
+                    <li><a href="#">配置说明</a></li>
+                    <li><a href="#">常见问题</a></li>
+                    <li><a href="#">更新日志</a></li>
+                </ul>
+            </aside>
+            
+            <article class="content">
+                <h1>欢迎使用</h1>
+                <p>这是一套完整的技术文档，帮助你快速上手和使用相关工具。</p>
+                
+                <h2>快速开始</h2>
+                <pre><code># 安装
+curl -fsSL https://${domain}/install.sh | bash
+
+# 启动
+systemctl start myapp
+
+# 查看状态
+systemctl status myapp</code></pre>
+                
+                <h2>特性</h2>
+                <ul>
+                    <li>高性能 - 基于最新技术栈构建</li>
+                    <li>易用 - 简单的配置即可运行</li>
+                    <li>安全 - 内置多种安全防护</li>
+                    <li>开源 - 代码完全开源</li>
+                </ul>
+            </article>
+        </div>
+    </main>
+    
+    <footer>
+        <p>&copy; $(date +%Y) ${title}. All rights reserved.</p>
+    </footer>
+</body>
+</html>
+HTML
+    
+    generate_css
+}
+
+# 生成 CSS 样式
+generate_css() {
+    cat > "$WEBSITE_DIR/css/style.css" <<'CSS'
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    line-height: 1.6;
+    color: #333;
+    background: #f5f5f5;
+}
+
+header {
+    background: #fff;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+}
+
+nav {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 1rem 2rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.logo {
+    font-size: 1.5rem;
+    font-weight: bold;
+    color: #2563eb;
+}
+
+nav ul {
+    display: flex;
+    list-style: none;
+    gap: 2rem;
+}
+
+nav a {
+    text-decoration: none;
+    color: #666;
+    transition: color 0.3s;
+}
+
+nav a:hover {
+    color: #2563eb;
+}
+
+main {
+    max-width: 1200px;
+    margin: 2rem auto;
+    padding: 0 2rem;
+    display: grid;
+    grid-template-columns: 1fr 300px;
+    gap: 2rem;
+}
+
+.post {
+    background: #fff;
+    padding: 2rem;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.post h1 {
+    color: #1a1a1a;
+    margin-bottom: 0.5rem;
+}
+
+.meta {
+    color: #999;
+    font-size: 0.9rem;
+    margin-bottom: 1rem;
+}
+
+.post p {
+    margin-bottom: 1rem;
+    color: #555;
+}
+
+.post h2 {
+    color: #1a1a1a;
+    margin: 1.5rem 0 1rem;
+}
+
+.post ul {
+    margin-left: 1.5rem;
+    color: #555;
+}
+
+.post li {
+    margin-bottom: 0.5rem;
+}
+
+.post a {
+    color: #2563eb;
+    text-decoration: none;
+}
+
+.sidebar {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.widget {
+    background: #fff;
+    padding: 1.5rem;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.widget h3 {
+    color: #1a1a1a;
+    margin-bottom: 1rem;
+    font-size: 1.1rem;
+}
+
+.tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.tag {
+    background: #e0e7ff;
+    color: #4338ca;
+    padding: 0.25rem 0.75rem;
+    border-radius: 9999px;
+    font-size: 0.85rem;
+}
+
+footer {
+    text-align: center;
+    padding: 2rem;
+    color: #999;
+    margin-top: 2rem;
+}
+
+/* Gallery styles */
+.gallery {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 1.5rem;
+    margin-top: 2rem;
+}
+
+.gallery-item {
+    background: #fff;
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.placeholder {
+    height: 200px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-size: 1.2rem;
+    font-weight: bold;
+}
+
+.gallery-item p {
+    padding: 1rem;
+    text-align: center;
+    color: #666;
+}
+
+.subtitle {
+    text-align: center;
+    color: #666;
+    margin-bottom: 2rem;
+}
+
+/* Portfolio styles */
+.hero {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: #fff;
+    padding: 4rem 2rem;
+    text-align: center;
+}
+
+.hero-content h1 {
+    font-size: 3rem;
+    margin-bottom: 1rem;
+}
+
+.hero-content p {
+    font-size: 1.2rem;
+    margin-bottom: 2rem;
+    opacity: 0.9;
+}
+
+.skills {
+    display: flex;
+    justify-content: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+
+.skill {
+    background: rgba(255,255,255,0.2);
+    padding: 0.5rem 1rem;
+    border-radius: 9999px;
+    font-size: 0.9rem;
+}
+
+.projects {
+    margin-top: 3rem;
+}
+
+.projects h2 {
+    text-align: center;
+    margin-bottom: 2rem;
+}
+
+.project-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 1.5rem;
+}
+
+.project-card {
+    background: #fff;
+    padding: 1.5rem;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.project-card h3 {
+    color: #1a1a1a;
+    margin-bottom: 0.5rem;
+}
+
+.project-card p {
+    color: #666;
+    margin-bottom: 1rem;
+}
+
+.tech-tags {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.tech-tags span {
+    background: #e0e7ff;
+    color: #4338ca;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.8rem;
+}
+
+/* Docs styles */
+.docs-layout {
+    display: grid;
+    grid-template-columns: 250px 1fr;
+    gap: 2rem;
+}
+
+.docs-layout .sidebar {
+    background: #fff;
+    padding: 1.5rem;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    height: fit-content;
+}
+
+.docs-layout .sidebar h3 {
+    margin-bottom: 1rem;
+    color: #1a1a1a;
+}
+
+.docs-layout .sidebar ul {
+    list-style: none;
+}
+
+.docs-layout .sidebar li {
+    margin-bottom: 0.5rem;
+}
+
+.docs-layout .sidebar a {
+    color: #666;
+    text-decoration: none;
+}
+
+.docs-layout .sidebar a:hover {
+    color: #2563eb;
+}
+
+.docs-layout .content {
+    background: #fff;
+    padding: 2rem;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.docs-layout .content h1 {
+    color: #1a1a1a;
+    margin-bottom: 1rem;
+}
+
+.docs-layout .content h2 {
+    color: #1a1a1a;
+    margin: 1.5rem 0 1rem;
+}
+
+pre {
+    background: #1e1e1e;
+    color: #d4d4d4;
+    padding: 1rem;
+    border-radius: 8px;
+    overflow-x: auto;
+    margin: 1rem 0;
+}
+
+code {
+    font-family: "Consolas", "Monaco", "Courier New", monospace;
+    font-size: 0.9rem;
+}
+
+@media (max-width: 768px) {
+    main {
+        grid-template-columns: 1fr;
+    }
+    
+    nav {
+        flex-direction: column;
+        gap: 1rem;
+    }
+    
+    .docs-layout {
+        grid-template-columns: 1fr;
+    }
+}
+CSS
+}
+
+# 生成 favicon
+generate_favicon() {
+    # 创建一个简单的 SVG favicon
+    cat > "$WEBSITE_DIR/favicon.svg" <<'SVG'
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+    <rect width="100" height="100" rx="20" fill="#2563eb"/>
+    <text x="50" y="65" font-size="45" text-anchor="middle" fill="white" font-family="Arial">V</text>
+</svg>
+SVG
+    
+    # 复制为 favicon.ico (使用 svg 作为备用)
+    cp "$WEBSITE_DIR/favicon.svg" "$WEBSITE_DIR/favicon.ico" 2>/dev/null || true
+}
+
+# 配置 Nginx
+generate_nginx_conf() {
+    local domain="$1"
+    local proxy_path="$2"
+    
+    cat > "$WEBSITE_NGINX" <<EOF
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${domain};
+    
+    # 自动跳转到 HTTPS
+    return 301 https://\$host\$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name ${domain};
+    
+    # SSL 证书路径 (由 acme.sh 管理)
+    ssl_certificate /root/.acme.sh/${domain}/fullchain.cer;
+    ssl_certificate_key /root/.acme.sh/${domain}/${domain}.key;
+    
+    # SSL 优化
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256;
+    ssl_prefer_server_ciphers off;
+    
+    # 静态网站根目录
+    root ${WEBSITE_DIR};
+    index index.html;
+    
+    # 伪装网站内容
+    location / {
+        try_files \$uri \$uri/ =404;
+        
+        # 添加缓存头
+        location ~* \.(css|js|png|jpg|jpeg|gif|ico|svg)$ {
+            expires 1M;
+            add_header Cache-Control "public, immutable";
+        }
+    }
+    
+    # 代理路径 (用于代理协议)
+    location ${proxy_path} {
+        proxy_pass http://127.0.0.1:10000;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+    }
+    
+    # 安全头
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    
+    # 日志
+    access_log /var/log/nginx/${domain}-access.log;
+    error_log /var/log/nginx/${domain}-error.log;
+}
+EOF
+}
+
+# 配置 Caddy
+generate_caddy_conf() {
+    local domain="$1"
+    local proxy_path="$2"
+    
+    cat > "$WEBSITE_CADDY" <<EOF
+${domain} {
+    root * ${WEBSITE_DIR}
+    file_server
+    
+    # 自动 HTTPS
+    tls admin@${domain}
+    
+    # 代理路径
+    handle_path ${proxy_path}/* {
+        reverse_proxy 127.0.0.1:10000
+    }
+    
+    # 安全头
+    header {
+        X-Frame-Options "SAMEORIGIN"
+        X-Content-Type-Options "nosniff"
+        X-XSS-Protection "1; mode=block"
+    }
+    
+    # 日志
+    log {
+        output file /var/log/caddy/${domain}-access.log
+    }
+}
+EOF
+}
+
+# 一键部署伪装网站主菜单
+website_manager() {
+    while true; do
+        clear
+        echo ""
+        echo -e "${CYAN}============================================================${NC}"
+        echo -e "${CYAN}                    伪装网站部署${NC}"
+        echo -e "${CYAN}============================================================${NC}"
+        echo ""
+        
+        # 显示当前状态
+        if [[ -d "$WEBSITE_DIR" && -f "$WEBSITE_DIR/index.html" ]]; then
+            echo -e "${GREEN}当前状态: 已部署${NC}"
+            local site_size=$(du -sh "$WEBSITE_DIR" 2>/dev/null | cut -f1)
+            echo -e "  网站大小: ${site_size}"
+            
+            if command -v nginx &>/dev/null && [[ -f "$WEBSITE_NGINX" ]]; then
+                local nginx_status=$(systemctl is-active nginx 2>/dev/null || echo "未运行")
+                echo -e "  Nginx: ${nginx_status}"
+            fi
+            
+            if command -v caddy &>/dev/null && [[ -f "$WEBSITE_CADDY" ]]; then
+                local caddy_status=$(systemctl is-active caddy 2>/dev/null || echo "未运行")
+                echo -e "  Caddy: ${caddy_status}"
+            fi
+        else
+            echo -e "${YELLOW}当前状态: 未部署${NC}"
+        fi
+        
+        echo ""
+        echo -e "${YELLOW}操作选项:${NC}"
+        echo "  1. 部署博客模板"
+        echo "  2. 部署图库模板"
+        echo "  3. 部署作品集模板"
+        echo "  4. 部署文档模板"
+        echo "  5. 自定义网站内容"
+        echo "  6. 配置 Web 服务器 (Nginx/Caddy)"
+        echo "  7. 更新网站内容"
+        echo "  8. 查看网站状态"
+        echo "  9. 删除网站"
+        echo "  0. 返回主菜单"
+        echo ""
+        read -rp "请选择 [0-9]: " web_choice
+        
+        case $web_choice in
+            1|2|3|4)
+                deploy_website "$web_choice"
+                ;;
+            5)
+                custom_website_content
+                ;;
+            6)
+                setup_web_server
+                ;;
+            7)
+                update_website_content
+                ;;
+            8)
+                view_website_status
+                ;;
+            9)
+                remove_website
+                ;;
+            0)
+                return
+                ;;
+            *)
+                warn "无效选择"
+                ;;
+        esac
+        
+        echo ""
+        read -rp "按回车键继续..."
+    done
+}
+
+# 部署网站
+deploy_website() {
+    local site_type="$1"
+    local type_name=""
+    
+    case "$site_type" in
+        1) type_name="博客" ;;
+        2) type_name="图库" ;;
+        3) type_name="作品集" ;;
+        4) type_name="文档" ;;
+    esac
+    
+    echo ""
+    echo -e "${YELLOW}部署${type_name}模板...${NC}"
+    
+    # 获取域名
+    local domain=""
+    read -rp "请输入你的域名 (如: example.com): " domain
+    
+    if [[ -z "$domain" ]]; then
+        error "域名不能为空"
+        return 1
+    fi
+    
+    # 生成网站内容
+    case "$site_type" in
+        1) generate_blog_template "$domain" ;;
+        2) generate_gallery_template "$domain" ;;
+        3) generate_portfolio_template "$domain" ;;
+        4) generate_docs_template "$domain" ;;
+    esac
+    
+    echo -e "${GREEN}网站内容已生成!${NC}"
+    echo -e "  目录: ${WEBSITE_DIR}"
+    echo -e "  域名: ${domain}"
+    
+    # 询问是否配置 Web 服务器
+    echo ""
+    read -rp "是否配置 Web 服务器? [Y/n]: " setup_web
+    if [[ "$setup_web" != "n" && "$setup_web" != "N" ]]; then
+        setup_web_server "$domain"
+    fi
+    
+    # 询问是否申请 SSL 证书
+    echo ""
+    read -rp "是否申请 SSL 证书? [Y/n]: " setup_ssl
+    if [[ "$setup_ssl" != "n" && "$setup_ssl" != "N" ]]; then
+        setup_website_ssl "$domain"
+    fi
+}
+
+# 配置 Web 服务器
+setup_web_server() {
+    local domain="${1:-}"
+    
+    if [[ -z "$domain" ]]; then
+        read -rp "请输入域名: " domain
+    fi
+    
+    echo ""
+    echo -e "${YELLOW}选择 Web 服务器:${NC}"
+    echo "  1. Nginx (推荐)"
+    echo "  2. Caddy (自动 HTTPS)"
+    echo "  3. 返回"
+    echo ""
+    read -rp "请选择 [1-3]: " server_choice
+    
+    case "$server_choice" in
+        1)
+            if ! command -v nginx &>/dev/null; then
+                echo -e "${YELLOW}安装 Nginx...${NC}"
+                apt update -qq && apt install -y -qq nginx 2>/dev/null || \
+                yum install -y nginx 2>/dev/null || \
+                dnf install -y nginx 2>/dev/null || true
+            fi
+            
+            if command -v nginx &>/dev/null; then
+                generate_nginx_conf "$domain" "/proxy"
+                nginx -t 2>/dev/null && systemctl reload nginx 2>/dev/null
+                systemctl enable nginx 2>/dev/null
+                echo -e "${GREEN}Nginx 配置完成!${NC}"
+                echo -e "  配置: ${WEBSITE_NGINX}"
+            else
+                error "Nginx 安装失败"
+            fi
+            ;;
+        2)
+            if ! command -v caddy &>/dev/null; then
+                echo -e "${YELLOW}安装 Caddy...${NC}"
+                apt install -y -qq caddy 2>/dev/null || \
+                yum install -y caddy 2>/dev/null || \
+                dnf install -y caddy 2>/dev/null || \
+                apt install -y -qq debian-keyring debian-archive-keyring apt-transport-https 2>/dev/null && \
+                curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' 2>/dev/null | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg 2>/dev/null && \
+                curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' 2>/dev/null | tee /etc/apt/sources.list.d/caddy-stable.list 2>/dev/null && \
+                apt update -qq && apt install -y caddy 2>/dev/null || true
+            fi
+            
+            if command -v caddy &>/dev/null; then
+                generate_caddy_conf "$domain" "/proxy"
+                systemctl reload caddy 2>/dev/null || systemctl restart caddy 2>/dev/null
+                systemctl enable caddy 2>/dev/null
+                echo -e "${GREEN}Caddy 配置完成!${NC}"
+                echo -e "  配置: ${WEBSITE_CADDY}"
+            else
+                error "Caddy 安装失败"
+            fi
+            ;;
+        3)
+            return
+            ;;
+        *)
+            warn "无效选择"
+            ;;
+    esac
+}
+
+# 申请 SSL 证书
+setup_website_ssl() {
+    local domain="$1"
+    
+    echo ""
+    echo -e "${YELLOW}申请 SSL 证书...${NC}"
+    
+    # 检查 acme.sh
+    local acme_sh="$HOME/.acme.sh/acme.sh"
+    [[ ! -f "$acme_sh" ]] && acme_sh="/root/.acme.sh/acme.sh"
+    
+    if [[ ! -f "$acme_sh" ]]; then
+        echo -e "${YELLOW}安装 acme.sh...${NC}"
+        curl https://get.acme.sh | bash 2>/dev/null || true
+        acme_sh="$HOME/.acme.sh/acme.sh"
+        [[ ! -f "$acme_sh" ]] && acme_sh="/root/.acme.sh/acme.sh"
+    fi
+    
+    if [[ -f "$acme_sh" ]]; then
+        "$acme_sh" --issue --standalone -d "$domain" --server letsencrypt 2>/dev/null
+        if [[ $? -eq 0 ]]; then
+            echo -e "${GREEN}证书申请成功!${NC}"
+        else
+            echo -e "${RED}证书申请失败，请确保:${NC}"
+            echo -e "  ${YELLOW}- 域名已解析到本机${NC}"
+            echo -e "  ${YELLOW}- 80 端口未被占用${NC}"
+        fi
+    else
+        error "acme.sh 安装失败"
+    fi
+}
+
+# 自定义网站内容
+custom_website_content() {
+    echo ""
+    echo -e "${YELLOW}自定义网站内容${NC}"
+    echo -e "${YELLOW}网站目录: ${WEBSITE_DIR}${NC}"
+    echo ""
+    echo "你可以:"
+    echo "  1. 直接编辑 ${WEBSITE_DIR}/index.html"
+    echo "  2. 上传自己的静态网站文件到 ${WEBSITE_DIR}"
+    echo "  3. 使用 Hugo/Hexo 等工具生成后部署"
+    echo ""
+    
+    if [[ -f "$WEBSITE_DIR/index.html" ]]; then
+        echo -e "${GREEN}当前 index.html 存在${NC}"
+        ls -la "$WEBSITE_DIR"
+    fi
+}
+
+# 更新网站内容
+update_website_content() {
+    echo ""
+    echo -e "${YELLOW}更新网站内容...${NC}"
+    
+    if [[ ! -f "$WEBSITE_DIR/index.html" ]]; then
+        error "网站未部署"
+        return 1
+    fi
+    
+    # 更新日期等信息
+    sed -i "s/$(date -d '1 day ago' +%Y-%m-%d)/$(date +%Y-%m-%d)/g" "$WEBSITE_DIR/index.html" 2>/dev/null || true
+    
+    echo -e "${GREEN}网站内容已更新${NC}"
+}
+
+# 查看网站状态
+view_website_status() {
+    echo ""
+    echo -e "${CYAN}============================================================${NC}"
+    echo -e "${CYAN}                    网站状态${NC}"
+    echo -e "${CYAN}============================================================${NC}"
+    echo ""
+    
+    if [[ -d "$WEBSITE_DIR" ]]; then
+        echo -e "${GREEN}网站目录: ${WEBSITE_DIR}${NC}"
+        echo -e "  大小: $(du -sh "$WEBSITE_DIR" 2>/dev/null | cut -f1)"
+        echo -e "  文件数: $(find "$WEBSITE_DIR" -type f | wc -l)"
+        echo ""
+        
+        if [[ -f "$WEBSITE_DIR/index.html" ]]; then
+            echo -e "${GREEN}首页存在${NC}"
+        fi
+        
+        if command -v nginx &>/dev/null; then
+            echo ""
+            echo -e "${YELLOW}Nginx 状态:${NC}"
+            systemctl status nginx --no-pager 2>/dev/null | head -5 || echo "  未运行"
+        fi
+        
+        if command -v caddy &>/dev/null; then
+            echo ""
+            echo -e "${YELLOW}Caddy 状态:${NC}"
+            systemctl status caddy --no-pager 2>/dev/null | head -5 || echo "  未运行"
+        fi
+    else
+        echo -e "${YELLOW}网站未部署${NC}"
+    fi
+    
+    echo ""
+    echo -e "${CYAN}============================================================${NC}"
+}
+
+# 删除网站
+remove_website() {
+    echo ""
+    read -rp "确认删除伪装网站? [y/N]: " confirm
+    
+    if [[ "$confirm" == "y" || "$confirm" == "Y" ]]; then
+        rm -rf "$WEBSITE_DIR"
+        rm -f "$WEBSITE_NGINX"
+        rm -f "$WEBSITE_CADDY"
+        
+        systemctl reload nginx 2>/dev/null || true
+        systemctl reload caddy 2>/dev/null || true
+        
+        echo -e "${GREEN}网站已删除${NC}"
+    fi
+}
+
 show_banner() {
 
     echo ""
 
     echo -e "${CYAN}============================================================${NC}"
 
-    echo -e "${GREEN}           VPS Toolbox - 多功能一键部署工具 v3.2.0${NC}"
+    echo -e "${GREEN}           VPS Toolbox - 多功能一键部署工具 v3.3.0${NC}"
 
     echo -e "${CYAN}============================================================${NC}"
 
@@ -6276,7 +7455,10 @@ show_menu() {
 
     echo "    18. 安全配置审计"
 
-    echo -e "  ${YELLOW}[管理]${NC}"
+    echo -e "  ${YELLOW}[伪装网站]${NC}"
+
+    echo "    19. 部署伪装网站"
+[管理]${NC}"
 
     echo "    17. 查看所有配置"
 
@@ -6314,7 +7496,7 @@ main() {
 
         show_menu
 
-        read -rp "请选择操作 [0-23]: " choice
+        read -rp "请选择操作 [0-24]: " choice
 
         
 
@@ -6356,15 +7538,17 @@ main() {
 
             18) security_audit_menu ;;
 
-            19) view_config ;;
+            19) website_manager ;;
 
-            20) show_subscription ;;
+            20) view_config ;;
 
-            21) show_traffic_stats ;;
+            21) show_subscription ;;
 
-            22) view_stats_menu ;;
+            22) show_traffic_stats ;;
 
-            23) uninstall_service ;;
+            23) view_stats_menu ;;
+
+            24) uninstall_service ;;
 
             0)
 
