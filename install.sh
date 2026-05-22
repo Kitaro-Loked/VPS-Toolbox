@@ -3336,13 +3336,16 @@ EOF
 
             echo -e "${YELLOW}正在发送测试消息...${NC}"
 
-            local test_msg="🚀 *VPS Toolbox* 配置成功
+            local test_msg=$(cat <<'EOF'
+🚀 *VPS Toolbox* 配置成功
 
 服务器: $(hostname)
 
 IP: $(get_server_ip)
 
-时间: $(date '+%Y-%m-%d %H:%M:%S')"
+时间: $(date '+%Y-%m-%d %H:%M:%S')
+EOF
+)
 
             
 
@@ -3366,13 +3369,16 @@ IP: $(get_server_ip)
 
                 source "$bot_config"
 
-                local test_msg="🧪 *测试消息*
+                local test_msg=$(cat <<'EOF'
+🧪 *测试消息*
 
 服务器: $(hostname)
 
 IP: $(get_server_ip)
 
-时间: $(date '+%Y-%m-%d %H:%M:%S')"
+时间: $(date '+%Y-%m-%d %H:%M:%S')
+EOF
+)
 
                 if send_tg_message "$test_msg"; then
 
@@ -3528,7 +3534,8 @@ send_tg_notify() {
 
     
 
-    local message="📢 *${title}*
+    local message=$(cat <<EOF
+📢 *${title}*
 
 ${content}
 
@@ -3536,7 +3543,9 @@ ${content}
 
 IP: \`$(get_server_ip)\`
 
-时间: $(date '+%Y-%m-%d %H:%M:%S')"
+时间: $(date '+%Y-%m-%d %H:%M:%S')
+EOF
+)
 
     
 
@@ -3612,7 +3621,8 @@ get_server_info() {
 
     
 
-    echo "📊 *服务器状态*
+    local msg=$(cat <<EOF
+📊 *服务器状态*
 
 主机名: \`${hostname}\`
 
@@ -3624,7 +3634,10 @@ IP: \`${ip}\`
 
 磁盘: \`${disk}\`
 
-运行时间: ${uptime_info}"
+运行时间: ${uptime_info}
+EOF
+)
+        echo "$msg"
 
 }
 
@@ -3632,9 +3645,12 @@ IP: \`${ip}\`
 
 get_proxy_status() {
 
-    local status="📡 *代理服务状态*
+    local status=$(cat <<'EOF'
+📡 *代理服务状态*
 
-"
+EOF
+)
+    status="${status}"
 
     
 
@@ -3644,13 +3660,17 @@ get_proxy_status() {
 
         local xray_port=$(jq -r '.inbounds[0].port // "未知"' /usr/local/etc/xray/config.json 2>/dev/null)
 
-        status="${status}✅ Xray: 运行中 (端口: ${xray_port})
-"
+        status="${status}$(cat <<'EOF'
+✅ Xray: 运行中 (端口: ${xray_port})
+EOF
+)"
 
     else
 
-        status="${status}❌ Xray: 未运行
-"
+        status="${status}$(cat <<'EOF'
+❌ Xray: 未运行
+EOF
+)"
 
     fi
 
@@ -3660,13 +3680,17 @@ get_proxy_status() {
 
     if systemctl is-active --quiet hysteria-server 2>/dev/null || systemctl is-active --quiet hysteria2 2>/dev/null; then
 
-        status="${status}✅ Hysteria2: 运行中
-"
+        status="${status}$(cat <<'EOF'
+✅ Hysteria2: 运行中
+EOF
+)"
 
     else
 
-        status="${status}❌ Hysteria2: 未运行
-"
+        status="${status}$(cat <<'EOF'
+❌ Hysteria2: 未运行
+EOF
+)"
 
     fi
 
@@ -3676,13 +3700,17 @@ get_proxy_status() {
 
     if systemctl is-active --quiet shadowsocks-rust 2>/dev/null || systemctl is-active --quiet shadowsocks 2>/dev/null; then
 
-        status="${status}✅ Shadowsocks: 运行中
-"
+        status="${status}$(cat <<'EOF'
+✅ Shadowsocks: 运行中
+EOF
+)"
 
     else
 
-        status="${status}❌ Shadowsocks: 未运行
-"
+        status="${status}$(cat <<'EOF'
+❌ Shadowsocks: 未运行
+EOF
+)"
 
     fi
 
@@ -3696,9 +3724,12 @@ get_proxy_status() {
 
 get_config_links() {
 
-    local links="🔗 *配置信息*
+    local links=$(cat <<'EOF'
+🔗 *配置信息*
 
-"
+EOF
+)
+    links="${links}"
 
     
 
@@ -3706,11 +3737,13 @@ get_config_links() {
 
         local vless_link=$(grep '"连接链接"' /usr/local/etc/xray/reclient.json 2>/dev/null | sed 's/.*"连接链接": "\(.*\)".*/\1/')
 
-        [[ -n "$vless_link" ]] && links="${links}Vless:
+        [[ -n "$vless_link" ]] && links="${links}$(cat <<EOF
+Vless:
 
 \`${vless_link}\`
 
-"
+EOF
+)"
 
     fi
 
@@ -3724,11 +3757,13 @@ get_config_links() {
 
         if [[ -n "$hy2_server" && -n "$hy2_auth" ]]; then
 
-            links="${links}Hysteria2:
+            links="${links}$(cat <<EOF
+Hysteria2:
 
 \`hysteria2://${hy2_auth}@${hy2_server}/?insecure=1&sni=bing.com#Hysteria2\`
 
-"
+EOF
+)"
 
         fi
 
@@ -3778,17 +3813,25 @@ process_command() {
 
                 local traffic=$(vnstat -i "$main_iface" --oneline 2>/dev/null | awk -F';' '{print "今日: " $4 " | 本月: " $11}')
 
-                bot_send "📊 *流量统计*
+                local tg_msg=$(cat <<EOF
+📊 *流量统计*
 
 接口: ${main_iface}
 
-${traffic}"
+${traffic}
+EOF
+)
+            bot_send "$tg_msg"
 
             else
 
-                bot_send "📊 *流量统计*
+                local tg_msg2=$(cat <<'EOF'
+📊 *流量统计*
 
-vnStat 未安装或未配置"
+vnStat 未安装或未配置
+EOF
+)
+            bot_send "$tg_msg2"
 
             fi
 
@@ -3844,7 +3887,8 @@ vnStat 未安装或未配置"
 
         "/help"|"/帮助"|"/start")
 
-            bot_send "🤖 *VPS Toolbox Bot 命令列表*
+            local help_msg=$(cat <<'EOF'
+🤖 *VPS Toolbox Bot 命令列表*
 
 📊 状态查询
 
@@ -3868,7 +3912,10 @@ vnStat 未安装或未配置"
 
 ❓ 帮助
 
-\`/help\` - 显示此帮助"
+\`/help\` - 显示此帮助
+EOF
+)
+            bot_send "$help_msg"
 
             ;;
 
@@ -4004,13 +4051,16 @@ notify_install_complete() {
 
     
 
-    local content="✅ *${protocol}* 安装完成
+    local content=$(cat <<EOF
+✅ *${protocol}* 安装完成
 
 服务器: \`$(hostname)\`
 
 IP: \`$(get_server_ip)\`
 
-时间: $(date '+%Y-%m-%d %H:%M:%S')"
+时间: $(date '+%Y-%m-%d %H:%M:%S')
+EOF
+)
 
     
 
@@ -4520,11 +4570,14 @@ push_sub_to_telegram() {
 
     # 构建消息
 
-    local message="✈️ *节点订阅更新*
+    local message=$(cat <<'EOF'
+✈️ *节点订阅更新*
 
 📊 *节点信息:*
 
-"
+EOF
+)
+    message="${message}"
 
     
 
@@ -4542,7 +4595,7 @@ push_sub_to_telegram() {
 
     
 
-    message="${message}
+    message="${message}$(cat <<EOF
 
 📡 *订阅链接:*
 
@@ -4552,7 +4605,9 @@ push_sub_to_telegram() {
 
 \`${sub_b64}\`
 
-⏰ 更新时间: $(date '+%Y-%m-%d %H:%M:%S')"
+⏰ 更新时间: $(date '+%Y-%m-%d %H:%M:%S')
+EOF
+)"
 
     
 
@@ -4684,11 +4739,14 @@ if [[ "$new_md5" != "$old_md5" ]]; then
 
     
 
-    message="✈️ *节点订阅自动更新*
+    message=$(cat <<EOF
+✈️ *节点订阅自动更新*
 
 📊 *节点数: ${node_count}*
 
-"
+EOF
+)
+    message="${message}"
 
     
 
@@ -4706,7 +4764,7 @@ if [[ "$new_md5" != "$old_md5" ]]; then
 
     
 
-    message="${message}
+    message="${message}$(cat <<EOF
 
 📡 *订阅链接:*
 
@@ -4716,7 +4774,9 @@ if [[ "$new_md5" != "$old_md5" ]]; then
 
 \`${sub_b64}\`
 
-⏰ 更新时间: $(date '+%Y-%m-%d %H:%M:%S')"
+⏰ 更新时间: $(date '+%Y-%m-%d %H:%M:%S')
+EOF
+)"
 
     
 
@@ -5521,14 +5581,17 @@ check_vps_health() {
                 if [[ -f "$bot_config" ]]; then
                     source "$bot_config"
                     if [[ -n "$TG_BOT_TOKEN" && -n "$TG_CHAT_ID" ]]; then
-                        local msg="🚨 *节点故障告警*
+                        local msg=$(cat <<EOF
+🚨 *节点故障告警*
 
 节点: ${name}
 地址: ${addr}
 协议: ${proto}
 时间: $(date '+%Y-%m-%d %H:%M:%S')
 
-请检查节点状态!"
+请检查节点状态!
+EOF
+)
                         curl -s -X POST "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" \
                             -d "chat_id=${TG_CHAT_ID}" \
                             -d "text=${msg}" \
@@ -7450,7 +7513,8 @@ show_menu() {
     echo -e "  ${YELLOW}[伪装网站]${NC}"
 
     echo "    19. 部署伪装网站"
-[管理]${NC}"
+
+    echo -e "  ${YELLOW}[管理]${NC}"
 
     echo "    17. 查看所有配置"
 
