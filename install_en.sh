@@ -2,14 +2,14 @@
 # Auto-fix CRLF
 sed -i 's/\r$//' "$0" 2>/dev/null || true
 # ============================================================
-# VPS Toolbox - 一键部署脚本
-# 功能: DDNS/WARP/Vless/Hysteria2/SS/VMess/HTTPS代理
-# 作者: Kitaro-Loked
-# 仓库: https://github.com/Kitaro-Loked/VPS-Toolbox
-# 版本: 2.5.0
-# 致谢: 协议安装脚本全部来自 yeahwu/v2ray-wss
+# VPS Toolbox - One-Click Deploy Script
+# Features: DDNS/WARP/Vless/Hysteria2/SS/VMess/HTTPS代理
+# Author: Kitaro-Loked
+# Repo: https://github.com/Kitaro-Loked/VPS-Toolbox
+# Version: 2.5.0
+# Credit: Protocol scripts from yeahwu/v2ray-wss
 #       https://github.com/yeahwu/v2ray-wss
-#       本项目仅提供菜单封装、DDNS、WARP、订阅链接等管理功能
+#       This project provides menu wrapper, DDNS, WARP, subscription management
 # ============================================================
 
 set -e
@@ -111,18 +111,18 @@ setup_ddns() {
     clear
     echo ""
     echo -e "${CYAN}============================================================${NC}"
-    echo -e "${CYAN}                   DDNS 域名申请与管理${NC}"
+    echo -e "${CYAN}                   DDNS Domain Management${NC}"
     echo -e "${CYAN}============================================================${NC}"
     echo ""
     
-    echo -e "${YELLOW}请选择 DDNS 提供商:${NC}"
-    echo "  1. DuckDNS (推荐，免费，一键申请)"
-    echo "  2. Cloudflare (需要 API Token)"
-    echo "  3. No-IP (需要账号密码)"
-    echo "  4. 查看当前 DDNS 状态"
-    echo "  5. 返回主菜单"
+    echo -e "${YELLOW}Select DDNS Provider:${NC}"
+    echo "  1. DuckDNS (Recommended, Free)"
+    echo "  2. Cloudflare (API Token needed)"
+    echo "  3. No-IP (Account needed)"
+    echo "  4. View DDNS Status"
+    echo "  5. Back to Main"
     echo ""
-    read -rp "请选择 [1-5]: " ddns_choice
+    read -rp "Select [1-5]: " ddns_choice
     
     case $ddns_choice in
         1) setup_duckdns_auto ;;
@@ -138,25 +138,25 @@ setup_duckdns_auto() {
     clear
     echo ""
     echo -e "${CYAN}============================================================${NC}"
-    echo -e "${CYAN}                    DuckDNS 一键申请${NC}"
+    echo -e "${CYAN}                    DuckDNS Auto-Apply${NC}"
     echo -e "${CYAN}============================================================${NC}"
     echo ""
     
-    log "正在生成随机子域名..."
+    log "Generating random subdomain..."
     local RANDOM_SUB=$(tr -dc 'a-z0-9' </dev/urandom | head -c 8)
     local DUCK_DOMAIN="$RANDOM_SUB"
     local DDNS_DOMAIN="${RANDOM_SUB}.duckdns.org"
     local PUBLIC_IP=$(get_server_ip)
     
-    echo -e "${GREEN}已生成随机子域名:${NC} $DUCK_DOMAIN"
-    echo -e "${CYAN}完整域名:${NC} $DDNS_DOMAIN"
-    echo -e "${CYAN}公网IP:${NC} $PUBLIC_IP"
+    echo -e "${GREEN}Generated subdomain:${NC} $DUCK_DOMAIN"
+    echo -e "${CYAN}Full domain:${NC} $DDNS_DOMAIN"
+    echo -e "${CYAN}Public IP:${NC} $PUBLIC_IP"
     echo ""
     
-    echo -e "${YELLOW}DuckDNS 需要 Token 才能更新域名。${NC}"
-    echo "  1. 我已经有 DuckDNS Token (直接输入)"
-    echo "  2. 帮我打开 DuckDNS 注册页面 (获取 Token)"
-    echo "  3. 返回上一级"
+    echo -e "${YELLOW}DuckDNS requires Token。${NC}"
+    echo "  1. I have DuckDNS Token"
+    echo "  2. Open DuckDNS signup page"
+    echo "  3. Go back"
     echo ""
     read -rp "请选择 [1-3]: " duck_choice
     
@@ -164,10 +164,10 @@ setup_duckdns_auto() {
         1)
             duck_token=""
             while [[ -z "$duck_token" ]]; do
-                read -rp "请输入 DuckDNS Token: " duck_token
+                read -rp "Enter DuckDNS Token: " duck_token
                 duck_token=$(echo "$duck_token" | xargs)
                 if [[ -z "$duck_token" ]]; then
-                    warn "Token 不能为空，请重新输入"
+                    warn "Token cannot be empty"
                 fi
             done
             
@@ -176,17 +176,17 @@ setup_duckdns_auto() {
             if [[ "$RESULT" == "OK" ]]; then
                 log "DuckDNS 域名更新成功!"
             else
-                warn "域名更新返回: $RESULT"
-                warn "如果域名不存在，DuckDNS 会自动创建"
+                warn "Domain update returned: $RESULT"
+                warn "DuckDNS auto-creates if not exists"
             fi
             
-            log "等待 DNS 传播，最多60秒..."
+            log "Waiting for DNS propagation，up to 60s..."
             local DNS_READY=0
             for i in {1..12}; do
                 sleep 5
                 if host "$DDNS_DOMAIN" >/dev/null 2>&1 || nslookup "$DDNS_DOMAIN" >/dev/null 2>&1; then
                     DNS_READY=1
-                    log "DNS 已生效!"
+                    log "DNS ready!"
                     break
                 fi
                 echo -n "."
@@ -211,7 +211,7 @@ EOF
             chmod +x "$CONFIG_DIR/update-ddns.sh"
             (crontab -l 2>/dev/null | grep -v "update-ddns"; echo "*/5 * * * * $CONFIG_DIR/update-ddns.sh >/dev/null 2>&1") | crontab -
             
-            log "配置已保存! DDNS 更新脚本已配置 (每5分钟检测)"
+            log "Config saved! DDNS update script configured (每5分钟检测)"
             ;;
         2)
             echo ""
@@ -230,7 +230,7 @@ EOF
     esac
     
     echo ""
-    read -rp "按回车键继续..."
+    read -rp "Press Enter to continue..."
 }
 
 setup_cloudflare() {
@@ -281,7 +281,7 @@ EOF
     
     log "Cloudflare DDNS 配置完成! 域名: $DDNS_DOMAIN"
     echo ""
-    read -rp "按回车键继续..."
+    read -rp "Press Enter to continue..."
 }
 
 setup_noip() {
@@ -323,7 +323,7 @@ EOF
     
     log "No-IP 配置完成! 域名: $DDNS_DOMAIN"
     echo ""
-    read -rp "按回车键继续..."
+    read -rp "Press Enter to continue..."
 }
 
 view_ddns_status() {
@@ -337,7 +337,7 @@ view_ddns_status() {
     if [[ -f "$CONFIG_DIR/ddns.conf" ]]; then
         cat "$CONFIG_DIR/ddns.conf"
         echo ""
-        echo -e "${CYAN}当前公网IP:${NC} $(get_server_ip)"
+        echo -e "${CYAN}当前Public IP:${NC} $(get_server_ip)"
         echo -e "${CYAN}DDNS日志:${NC}"
         tail -n 5 /var/log/ddns.log 2>/dev/null || echo "暂无日志"
     else
@@ -345,7 +345,7 @@ view_ddns_status() {
     fi
     
     echo ""
-    read -rp "按回车键继续..."
+    read -rp "Press Enter to continue..."
 }
 
 # ==================== WARP 功能 ====================
@@ -354,11 +354,11 @@ setup_warp() {
     clear
     echo ""
     echo -e "${CYAN}============================================================${NC}"
-    echo -e "${CYAN}                      WARP 一键配置${NC}"
+    echo -e "${CYAN}                      WARP Config${NC}"
     echo -e "${CYAN}============================================================${NC}"
     echo ""
     
-    log "正在安装 WARP..."
+    log "Installing WARP..."
     
     curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | gpg --yes --dearmor --output /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
     echo "deb [arch=amd64 signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/cloudflare-client.list
@@ -367,9 +367,9 @@ setup_warp() {
     warp-cli register
     warp-cli connect
     
-    log "WARP 安装完成"
+    log "WARP installed"
     echo ""
-    read -rp "按回车键继续..."
+    read -rp "Press Enter to continue..."
 }
 
 # ==================== 协议安装 - 直接调用 yeahwu 的脚本 ====================
@@ -378,85 +378,85 @@ install_vless() {
     clear
     echo ""
     echo -e "${CYAN}============================================================${NC}"
-    echo -e "${CYAN}         正在安装 Vless + Reality (yeahwu/v2ray-wss)${NC}"
+    echo -e "${CYAN}         正在Install Vless + Reality (yeahwu/v2ray-wss)${NC}"
     echo -e "${CYAN}============================================================${NC}"
     echo ""
     
-    log "下载并执行 yeahwu/v2ray-wss reality.sh..."
+    log "Downloading and running yeahwu/v2ray-wss reality.sh..."
     cd /tmp
     wget -q https://raw.githubusercontent.com/yeahwu/v2ray-wss/main/reality.sh
     bash reality.sh
     
     echo ""
-    read -rp "按回车键继续..."
+    read -rp "Press Enter to continue..."
 }
 
 install_hysteria2() {
     clear
     echo ""
     echo -e "${CYAN}============================================================${NC}"
-    echo -e "${CYAN}           正在安装 Hysteria2 (yeahwu/v2ray-wss)${NC}"
+    echo -e "${CYAN}           正在Install Hysteria2 (yeahwu/v2ray-wss)${NC}"
     echo -e "${CYAN}============================================================${NC}"
     echo ""
     
-    log "下载并执行 yeahwu/v2ray-wss hy2.sh..."
+    log "Downloading and running yeahwu/v2ray-wss hy2.sh..."
     cd /tmp
     wget -q https://raw.githubusercontent.com/yeahwu/v2ray-wss/main/hy2.sh
     bash hy2.sh
     
     echo ""
-    read -rp "按回车键继续..."
+    read -rp "Press Enter to continue..."
 }
 
 install_shadowsocks() {
     clear
     echo ""
     echo -e "${CYAN}============================================================${NC}"
-    echo -e "${CYAN}        正在安装 Shadowsocks-rust (yeahwu/v2ray-wss)${NC}"
+    echo -e "${CYAN}        正在Install Shadowsocks-rust (yeahwu/v2ray-wss)${NC}"
     echo -e "${CYAN}============================================================${NC}"
     echo ""
     
-    log "下载并执行 yeahwu/v2ray-wss ss-rust.sh..."
+    log "Downloading and running yeahwu/v2ray-wss ss-rust.sh..."
     cd /tmp
     wget -q https://raw.githubusercontent.com/yeahwu/v2ray-wss/main/ss-rust.sh
     bash ss-rust.sh
     
     echo ""
-    read -rp "按回车键继续..."
+    read -rp "Press Enter to continue..."
 }
 
 install_vmess() {
     clear
     echo ""
     echo -e "${CYAN}============================================================${NC}"
-    echo -e "${CYAN}        正在安装 VMess + WS + TLS (yeahwu/v2ray-wss)${NC}"
+    echo -e "${CYAN}        正在Install VMess + WS + TLS (yeahwu/v2ray-wss)${NC}"
     echo -e "${CYAN}============================================================${NC}"
     echo ""
     
-    log "下载并执行 yeahwu/v2ray-wss tcp-wss.sh..."
+    log "Downloading and running yeahwu/v2ray-wss tcp-wss.sh..."
     cd /tmp
     wget -q https://raw.githubusercontent.com/yeahwu/v2ray-wss/main/tcp-wss.sh
     bash tcp-wss.sh
     
     echo ""
-    read -rp "按回车键继续..."
+    read -rp "Press Enter to continue..."
 }
 
 install_https_proxy() {
     clear
     echo ""
     echo -e "${CYAN}============================================================${NC}"
-    echo -e "${CYAN}       正在安装 HTTPS 正向代理 (yeahwu/v2ray-wss)${NC}"
+    echo -e "${CYAN}       正在Install HTTPS Forward Proxy (yeahwu/v2ray-wss)${NC}"
     echo -e "${CYAN}============================================================${NC}"
     echo ""
     
-    log "下载并执行 yeahwu/v2ray-wss https.sh..."
+    log "Downloading and running yeahwu/v2ray-wss https.sh..."
     cd /tmp
     wget -q https://raw.githubusercontent.com/yeahwu/v2ray-wss/main/https.sh
     bash https.sh
     
     echo ""
-    read -rp "按回车键继续..."
+    read -rp "Press Enter to continue..."
 }
 
 # ==================== 管理功能 ====================
@@ -465,53 +465,53 @@ view_config() {
     clear
     echo ""
     echo -e "${CYAN}============================================================${NC}"
-    echo -e "${CYAN}                    查看已安装服务配置${NC}"
+    echo -e "${CYAN}                    View Installed Services${NC}"
     echo -e "${CYAN}============================================================${NC}"
     echo ""
     
     if [[ -f "/usr/local/etc/xray/reclient.json" ]]; then
-        echo -e "${GREEN}[Vless + Reality 配置]${NC}"
+        echo -e "${GREEN}[Vless + Reality Config]${NC}"
         cat /usr/local/etc/xray/reclient.json
         echo ""
         echo "----------------------------------------"
     fi
     
     if [[ -f "/etc/hysteria/hyclient.json" ]]; then
-        echo -e "${GREEN}[Hysteria2 配置]${NC}"
+        echo -e "${GREEN}[Hysteria2 Config]${NC}"
         cat /etc/hysteria/hyclient.json
         echo ""
         echo "----------------------------------------"
     fi
     
     if [[ -f "/etc/shadowsocks/config.json" ]]; then
-        echo -e "${GREEN}[Shadowsocks-rust 配置]${NC}"
+        echo -e "${GREEN}[Shadowsocks-rust Config]${NC}"
         cat /etc/shadowsocks/config.json
         echo ""
         echo "----------------------------------------"
     fi
     
     if [[ -f "/usr/local/etc/v2ray/client.json" ]]; then
-        echo -e "${GREEN}[VMess 配置]${NC}"
+        echo -e "${GREEN}[VMess Config]${NC}"
         cat /usr/local/etc/v2ray/client.json
         echo ""
         echo "----------------------------------------"
     fi
     
     if [[ -f "/etc/caddy/https.json" ]]; then
-        echo -e "${GREEN}[HTTPS 正向代理配置]${NC}"
+        echo -e "${GREEN}[HTTPS Proxy Config]${NC}"
         cat /etc/caddy/https.json
         echo ""
         echo "----------------------------------------"
     fi
     
     if [[ -f "$CONFIG_DIR/ddns.conf" ]]; then
-        echo -e "${GREEN}[DDNS 配置]${NC}"
+        echo -e "${GREEN}[DDNS Config]${NC}"
         cat "$CONFIG_DIR/ddns.conf"
         echo ""
     fi
     
     echo ""
-    read -rp "按回车键继续..."
+    read -rp "Press Enter to continue..."
 }
 
 generate_subscription() {
@@ -570,42 +570,42 @@ show_subscription() {
     clear
     echo ""
     echo -e "${CYAN}============================================================${NC}"
-    echo -e "${CYAN}                      订阅链接${NC}"
+    echo -e "${CYAN}                      Subscription${NC}"
     echo -e "${CYAN}============================================================${NC}"
     echo ""
     
     local SUB_B64=$(generate_subscription)
     
     if [[ -z "$SUB_B64" ]]; then
-        echo -e "${YELLOW}尚未安装任何代理服务${NC}"
-        read -rp "按回车键继续..."
+        echo -e "${YELLOW}No proxy services installed${NC}"
+        read -rp "Press Enter to continue..."
         return
     fi
     
-    echo -e "${GREEN}订阅链接 (Base64):${NC}"
+    echo -e "${GREEN}Subscription (Base64):${NC}"
     echo ""
     echo "$SUB_B64"
     echo ""
     
-    read -rp "按回车键继续..."
+    read -rp "Press Enter to continue..."
 }
 
 uninstall_service() {
     clear
     echo ""
     echo -e "${CYAN}============================================================${NC}"
-    echo -e "${CYAN}                        卸载服务${NC}"
+    echo -e "${CYAN}                        Uninstall${NC}"
     echo -e "${CYAN}============================================================${NC}"
     echo ""
-    echo "  1. 卸载 Vless (Xray)"
-    echo "  2. 卸载 Hysteria2"
-    echo "  3. 卸载 Shadowsocks-rust"
-    echo "  4. 卸载 VMess (V2Ray)"
-    echo "  5. 卸载 HTTPS 正向代理 (Caddy)"
-    echo "  6. 卸载所有服务"
-    echo "  7. 返回主菜单"
+    echo "  1. Uninstall Vless (Xray)"
+    echo "  2. Uninstall Hysteria2"
+    echo "  3. Uninstall Shadowsocks-rust"
+    echo "  4. Uninstall VMess (V2Ray)"
+    echo "  5. Uninstall HTTPS Proxy (Caddy)"
+    echo "  6. Uninstall All"
+    echo "  7. Back to Main"
     echo ""
-    read -rp "请选择 [1-7]: " uninstall_choice
+    read -rp "Select [1-7]: " uninstall_choice
     
     case $uninstall_choice in
         1)
@@ -613,46 +613,46 @@ uninstall_service() {
             systemctl disable xray 2>/dev/null || true
             rm -rf /usr/local/etc/xray
             rm -f /usr/local/bin/xray
-            log "Vless 已卸载"
+            log "Vless uninstalled"
             ;;
         2)
             systemctl stop hysteria-server 2>/dev/null || true
             systemctl disable hysteria-server 2>/dev/null || true
             rm -rf /etc/hysteria
             rm -f /usr/local/bin/hysteria
-            log "Hysteria2 已卸载"
+            log "Hysteria2 uninstalled"
             ;;
         3)
             systemctl stop shadowsocks 2>/dev/null || true
             systemctl disable shadowsocks 2>/dev/null || true
             rm -f /usr/local/bin/ssserver
-            log "Shadowsocks-rust 已卸载"
+            log "Shadowsocks-rust uninstalled"
             ;;
         4)
             systemctl stop v2ray 2>/dev/null || true
             systemctl disable v2ray 2>/dev/null || true
             rm -rf /usr/local/etc/v2ray
             rm -f /usr/local/bin/v2ray
-            log "VMess 已卸载"
+            log "VMess uninstalled"
             ;;
         5)
             systemctl stop caddy 2>/dev/null || true
             systemctl disable caddy 2>/dev/null || true
             rm -f /usr/local/bin/caddy
-            log "HTTPS 正向代理已卸载"
+            log "HTTPS 正向代理uninstalled"
             ;;
         6)
             systemctl stop xray hysteria-server shadowsocks v2ray caddy nginx 2>/dev/null || true
             systemctl disable xray hysteria-server shadowsocks v2ray caddy nginx 2>/dev/null || true
             rm -rf /usr/local/etc/xray /etc/hysteria /usr/local/etc/v2ray
             rm -f /usr/local/bin/xray /usr/local/bin/hysteria /usr/local/bin/ssserver /usr/local/bin/v2ray /usr/local/bin/caddy
-            log "所有服务已卸载"
+            log "所有服务uninstalled"
             ;;
         7) return ;;
     esac
     
     echo ""
-    read -rp "按回车键继续..."
+    read -rp "Press Enter to continue..."
 }
 
 # ==================== 主菜单 ====================
@@ -660,11 +660,11 @@ uninstall_service() {
 show_banner() {
     echo ""
     echo -e "${CYAN}============================================================${NC}"
-    echo -e "${GREEN}           VPS Toolbox - 多功能一键部署工具 v2.5.0${NC}"
+    echo -e "${GREEN}           VPS Toolbox - One-Click Deploy Tool v2.5.0${NC}"
     echo -e "${CYAN}============================================================${NC}"
-    echo -e "  ${YELLOW}作者${NC}: Kitaro-Loked"
-    echo -e "  ${YELLOW}仓库${NC}: https://github.com/Kitaro-Loked/VPS-Toolbox"
-    echo -e "  ${YELLOW}致谢${NC}: 协议安装脚本来自 yeahwu/v2ray-wss"
+    echo -e "  ${YELLOW}Author${NC}: Kitaro-Loked"
+    echo -e "  ${YELLOW}Repo${NC}: https://github.com/Kitaro-Loked/VPS-Toolbox"
+    echo -e "  ${YELLOW}Credit${NC}: Protocol scripts from yeahwu/v2ray-wss"
     echo -e "          https://github.com/yeahwu/v2ray-wss"
     echo -e "${CYAN}============================================================${NC}"
     echo ""
@@ -673,22 +673,22 @@ show_banner() {
 show_menu() {
     clear
     show_banner
-    echo -e "  ${YELLOW}[DDNS & 网络]${NC}"
-    echo "    1. DDNS 域名申请与管理 (自动续签)"
-    echo "    2. WARP 一键配置"
+    echo -e "  ${YELLOW}[DDNS & Network]${NC}"
+    echo "    1. DDNS Domain (Auto-renew)"
+    echo "    2. WARP Config"
     echo ""
-    echo -e "  ${YELLOW}[代理协议 - 全部来自 yeahwu/v2ray-wss]${NC}"
-    echo "    3. 安装 Vless + Reality"
-    echo "    4. 安装 Hysteria2"
-    echo "    5. 安装 Shadowsocks-rust"
-    echo "    6. 安装 VMess + WS + TLS"
-    echo "    7. 安装 HTTPS 正向代理"
+    echo -e "  ${YELLOW}[Proxy Protocols - from yeahwu/v2ray-wss]${NC}"
+    echo "    3. Install Vless + Reality"
+    echo "    4. Install Hysteria2"
+    echo "    5. Install Shadowsocks-rust"
+    echo "    6. Install VMess + WS + TLS"
+    echo "    7. Install HTTPS Forward Proxy"
     echo ""
-    echo -e "  ${YELLOW}[管理]${NC}"
-    echo "    8. 查看所有配置"
-    echo "    9. 生成订阅链接"
-    echo "    10. 卸载服务"
-    echo "    0. 退出脚本"
+    echo -e "  ${YELLOW}[Management]${NC}"
+    echo "    8. View All Config"
+    echo "    9. Generate Subscription"
+    echo "    10. Uninstall"
+    echo "    0. Exit"
     echo ""
     echo -e "${CYAN}============================================================${NC}"
     echo ""
@@ -701,7 +701,7 @@ main() {
     
     while true; do
         show_menu
-        read -rp "请选择操作 [0-10]: " choice
+        read -rp "Select [0-10]: " choice
         
         case $choice in
             1) setup_ddns ;;
@@ -715,11 +715,11 @@ main() {
             9) show_subscription ;;
             10) uninstall_service ;;
             0)
-                echo -e "${GREEN}感谢使用 VPS Toolbox，再见!${NC}"
+                echo -e "${GREEN}Thanks for using VPS Toolbox!${NC}"
                 exit 0
                 ;;
             *)
-                warn "无效选择，请重新输入"
+                warn "Invalid selection"
                 sleep 1
                 ;;
         esac
