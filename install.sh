@@ -6,7 +6,7 @@ sed -i 's/\r$//' "$0" 2>/dev/null || true
 # 功能: DDNS/WARP/Vless/Hysteria2/SS/VMess/HTTPS代理
 # 作者: Kitaro-Loked
 # 仓库: https://github.com/Kitaro-Loked/VPS-Toolbox
-# 版本: 2.8.0
+# 版本: 2.9.0
 # 致谢: 协议安装脚本全部来自 yeahwu/v2ray-wss
 #       https://github.com/yeahwu/v2ray-wss
 #       本项目仅提供菜单封装、DDNS、WARP、订阅链接等管理功能
@@ -1635,10 +1635,455 @@ port_status() {
     read -rp "按回车键继续..."
 }
 
+# Telegram Bot 功能
+setup_tgbot() {
+    clear
+    echo ""
+    echo -e "${CYAN}============================================================${NC}"
+    echo -e "${CYAN}                    Telegram Bot 配置${NC}"
+    echo -e "${CYAN}============================================================${NC}"
+    echo ""
+    
+    # 检查是否已配置
+    local bot_config="/etc/vps-toolbox/tgbot.conf"
+    if [[ -f "$bot_config" ]]; then
+        echo -e "${GREEN}Bot 已配置${NC}"
+        source "$bot_config"
+        echo -e "  Bot Token: ${TG_BOT_TOKEN:0:20}..."
+        echo -e "  Chat ID: $TG_CHAT_ID"
+        echo ""
+        echo -e "${YELLOW}操作选项:${NC}"
+        echo "  1. 重新配置"
+        echo "  2. 测试发送消息"
+        echo "  3. 启动 Bot 服务"
+        echo "  4. 停止 Bot 服务"
+        echo "  5. 查看 Bot 状态"
+        echo "  6. 删除配置"
+        echo "  7. 返回主菜单"
+        echo ""
+        read -rp "请选择 [1-7]: " bot_choice
+    else
+        bot_choice=1
+    fi
+    
+    case $bot_choice in
+        1)
+            echo -e "${YELLOW}请从 @BotFather 获取 Bot Token${NC}"
+            echo -e "${YELLOW}格式: 123456789:ABCdefGHIjklMNOpqrsTUVwxyz${NC}"
+            echo ""
+            read -rp "请输入 Bot Token: " new_token
+            
+            if [[ -z "$new_token" ]]; then
+                echo -e "${RED}Token 不能为空${NC}"
+                read -rp "按回车键继续..."
+                return
+            fi
+            
+            # 获取 Chat ID
+            echo -e "${YELLOW}正在获取 Chat ID...${NC}"
+            echo -e "${YELLOW}请给 Bot 发送一条消息，然后按回车${NC}"
+            read -rp "按回车键继续..."
+            
+            local updates=$(curl -s "https://api.telegram.org/bot${new_token}/getUpdates")
+            local chat_id=$(echo "$updates" | grep -o '"chat":{"id":[0-9-]*' | grep -o '[0-9-]*' | tail -1)
+            
+            if [[ -z "$chat_id" ]]; then
+                echo -e "${YELLOW}未检测到消息，请手动输入 Chat ID${NC}"
+                echo -e "${YELLOW}获取方法: 访问 https://api.telegram.org/bot<TOKEN>/getUpdates${NC}"
+                read -rp "请输入 Chat ID: " chat_id
+            else
+                echo -e "${GREEN}自动获取到 Chat ID: $chat_id${NC}"
+            fi
+            
+            # 保存配置
+            mkdir -p /etc/vps-toolbox
+            cat > "$bot_config" <<EOF
+TG_BOT_TOKEN="$new_token"
+TG_CHAT_ID="$chat_id"
+EOF
+            
+            echo -e "${GREEN}配置已保存!${NC}"
+            
+            # 测试发送
+            echo -e "${YELLOW}正在发送测试消息...${NC}"
+            local test_msg="🚀 *VPS Toolbox* 配置成功
+eg
+服务器: $(hostname)
+IP: $(get_server_ip)
+时间: $(date '+%Y-%m-%d %H:%M:%S')"
+            
+            if send_tg_message "$test_msg"; then
+                echo -e "${GREEN}测试消息发送成功!${NC}"
+            else
+                echo -e "${RED}测试消息发送失败，请检查 Token 和 Chat ID${NC}"
+            fi
+            ;;
+            
+        2)
+            if [[ -f "$bot_config" ]]; then
+                source "$bot_config"
+                local test_msg="🧪 *测试消息*
+服务器: $(hostname)
+IP: $(get_server_ip)
+时间: $(date '+%Y-%m-%d %H:%M:%S')"
+                if send_tg_message "$test_msg"; then
+                    echo -e "${GREEN}测试消息发送成功!${NC}"
+                else
+                    echo -e "${RED}发送失败${NC}"
+                fi
+            fi
+            ;;
+            
+        3)
+            start_tgbot_service
+            ;;
+            
+        4)
+            stop_tgbot_service
+            ;;
+            
+        5)
+            if systemctl is-active --quiet vps-toolbox-bot 2>/dev/null; then
+                echo -e "${GREEN}Bot 服务运行中${NC}"
+                systemctl status vps-toolbox-bot --no-pager 2>/dev/null | head -10
+            else
+                echo -e "${YELLOW}Bot 服务未运行${NC}"
+            fi
+            ;;
+            
+        6)
+            read -rp "确认删除 Bot 配置? [y/N]: " confirm
+            if [[ "$confirm" == "y" || "$confirm" == "Y" ]]; then
+                rm -f "$bot_config"
+                systemctl stop vps-toolbox-bot 2>/dev/null || true
+                systemctl disable vps-toolbox-bot 2>/dev/null || true
+                rm -f /etc/systemd/system/vps-toolbox-bot.service
+                echo -e "${GREEN}配置已删除${NC}"
+            fi
+            ;;
+            
+        7)
+            return
+            ;;
+    esac
+    
+    echo ""
+    read -rp "按回车键继续..."
+}
+
+# 发送 Telegram 消息
+send_tg_message() {
+    local message="$1"
+    local bot_config="/etc/vps-toolbox/tgbot.conf"
+    
+    if [[ ! -f "$bot_config" ]]; then
+        return 1
+    fi
+    
+    source "$bot_config"
+    
+    if [[ -z "$TG_BOT_TOKEN" || -z "$TG_CHAT_ID" ]]; then
+        return 1
+    fi
+    
+    curl -s -X POST "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" \
+        -d "chat_id=${TG_CHAT_ID}" \
+        -d "text=${message}" \
+        -d "parse_mode=Markdown" \
+        -d "disable_web_page_preview=true" >/dev/null
+    
+    return 0
+}
+
+# 发送 Telegram 通知 (用于安装完成等)
+send_tg_notify() {
+    local title="$1"
+    local content="$2"
+    local bot_config="/etc/vps-toolbox/tgbot.conf"
+    
+    [[ ! -f "$bot_config" ]] && return 1
+    source "$bot_config"
+    [[ -z "$TG_BOT_TOKEN" || -z "$TG_CHAT_ID" ]] && return 1
+    
+    local message="📢 *${title}*
+
+${content}
+
+服务器: \`$(hostname)\`
+IP: \`$(get_server_ip)\`
+时间: $(date '+%Y-%m-%d %H:%M:%S')"
+    
+    send_tg_message "$message"
+}
+
+# 启动 Bot 服务
+start_tgbot_service() {
+    local bot_config="/etc/vps-toolbox/tgbot.conf"
+    
+    if [[ ! -f "$bot_config" ]]; then
+        echo -e "${RED}Bot 未配置，请先配置${NC}"
+        return 1
+    fi
+    
+    source "$bot_config"
+    
+    # 创建 Bot 处理脚本
+    cat > /usr/local/bin/vps-toolbox-bot.sh <<'BOTSCRIPT'
+#!/bin/bash
+# VPS Toolbox Telegram Bot
+
+source /etc/vps-toolbox/tgbot.conf
+
+# 发送消息函数
+bot_send() {
+    local msg="$1"
+    curl -s -X POST "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" \
+        -d "chat_id=${TG_CHAT_ID}" \
+        -d "text=${msg}" \
+        -d "parse_mode=Markdown" \
+        -d "disable_web_page_preview=true" >/dev/null
+}
+
+# 获取服务器信息
+get_server_info() {
+    local hostname=$(hostname)
+    local ip=$(curl -s ip.sb 2>/dev/null || echo "未知")
+    local load=$(uptime | awk -F'load average:' '{print $2}' | xargs)
+    local mem=$(free -h | awk '/^Mem:/ {print $3 "/" $2}')
+    local disk=$(df -h / | awk 'NR==2 {print $3 "/" $2 " (" $5 ")"}')
+    local uptime_info=$(uptime -p 2>/dev/null || uptime | awk -F',' '{print $1}')
+    
+    echo "📊 *服务器状态*
+
+主机名: \`${hostname}\`
+IP: \`${ip}\`
+负载: \`${load}\`
+内存: \`${mem}\`
+磁盘: \`${disk}\`
+运行时间: ${uptime_info}"
+}
+
+# 获取代理状态
+get_proxy_status() {
+    local status="📡 *代理服务状态*
+
+"
+    
+    # Xray
+    if systemctl is-active --quiet xray 2>/dev/null; then
+        local xray_port=$(jq -r '.inbounds[0].port // "未知"' /usr/local/etc/xray/config.json 2>/dev/null)
+        status="${status}✅ Xray: 运行中 (端口: ${xray_port})
+"
+    else
+        status="${status}❌ Xray: 未运行
+"
+    fi
+    
+    # Hysteria2
+    if systemctl is-active --quiet hysteria-server 2>/dev/null || systemctl is-active --quiet hysteria2 2>/dev/null; then
+        status="${status}✅ Hysteria2: 运行中
+"
+    else
+        status="${status}❌ Hysteria2: 未运行
+"
+    fi
+    
+    # Shadowsocks
+    if systemctl is-active --quiet shadowsocks-rust 2>/dev/null || systemctl is-active --quiet shadowsocks 2>/dev/null; then
+        status="${status}✅ Shadowsocks: 运行中
+"
+    else
+        status="${status}❌ Shadowsocks: 未运行
+"
+    fi
+    
+    echo "$status"
+}
+
+# 获取配置链接
+get_config_links() {
+    local links="🔗 *配置信息*
+
+"
+    
+    if [[ -f /usr/local/etc/xray/reclient.json ]]; then
+        local vless_link=$(grep '"连接链接"' /usr/local/etc/xray/reclient.json 2>/dev/null | sed 's/.*"连接链接": "\(.*\)".*/\1/')
+        [[ -n "$vless_link" ]] && links="${links}Vless:
+\`${vless_link}\`
+
+"
+    fi
+    
+    if [[ -f /etc/hysteria/hyclient.json ]]; then
+        local hy2_server=$(jq -r '.server' /etc/hysteria/hyclient.json 2>/dev/null)
+        local hy2_auth=$(jq -r '.auth' /etc/hysteria/hyclient.json 2>/dev/null)
+        if [[ -n "$hy2_server" && -n "$hy2_auth" ]]; then
+            links="${links}Hysteria2:
+\`hysteria2://${hy2_auth}@${hy2_server}/?insecure=1&sni=bing.com#Hysteria2\`
+
+"
+        fi
+    fi
+    
+    echo "$links"
+}
+
+# 处理命令
+process_command() {
+    local cmd="$1"
+    local msg_id="$2"
+    
+    case "$cmd" in
+        "/status"|"/状态")
+            bot_send "$(get_server_info)"
+            ;;
+        "/proxy"|"/代理")
+            bot_send "$(get_proxy_status)"
+            ;;
+        "/config"|"/配置")
+            bot_send "$(get_config_links)"
+            ;;
+        "/traffic"|"/流量")
+            local main_iface=$(ip route | grep default | awk '{print $5}' | head -1)
+            if command -v vnstat &>/dev/null && [[ -n "$main_iface" ]]; then
+                local traffic=$(vnstat -i "$main_iface" --oneline 2>/dev/null | awk -F';' '{print "今日: " $4 " | 本月: " $11}')
+                bot_send "📊 *流量统计*
+
+接口: ${main_iface}
+${traffic}"
+            else
+                bot_send "📊 *流量统计*
+
+vnStat 未安装或未配置"
+            fi
+            ;;
+        "/restart_xray"|"/重启xray")
+            systemctl restart xray 2>/dev/null
+            if systemctl is-active --quiet xray 2>/dev/null; then
+                bot_send "✅ Xray 重启成功"
+            else
+                bot_send "❌ Xray 重启失败"
+            fi
+            ;;
+        "/restart_hy2"|"/重启hy2")
+            systemctl restart hysteria-server 2>/dev/null || systemctl restart hysteria2 2>/dev/null
+            if systemctl is-active --quiet hysteria-server 2>/dev/null || systemctl is-active --quiet hysteria2 2>/dev/null; then
+                bot_send "✅ Hysteria2 重启成功"
+            else
+                bot_send "❌ Hysteria2 重启失败"
+            fi
+            ;;
+        "/restart_ss"|"/重启ss")
+            systemctl restart shadowsocks-rust 2>/dev/null || systemctl restart shadowsocks 2>/dev/null
+            if systemctl is-active --quiet shadowsocks-rust 2>/dev/null || systemctl is-active --quiet shadowsocks 2>/dev/null; then
+                bot_send "✅ Shadowsocks 重启成功"
+            else
+                bot_send "❌ Shadowsocks 重启失败"
+            fi
+            ;;
+        "/help"|"/帮助"|"/start")
+            bot_send "🤖 *VPS Toolbox Bot 命令列表*
+
+📊 状态查询
+\`/status\` - 服务器状态
+\`/proxy\` - 代理服务状态
+\`/traffic\` - 流量统计
+
+🔗 配置管理
+\`/config\` - 查看配置链接
+
+🔄 服务控制
+\`/restart_xray\` - 重启 Xray
+\`/restart_hy2\` - 重启 Hysteria2
+\`/restart_ss\` - 重启 Shadowsocks
+
+❓ 帮助
+\`/help\` - 显示此帮助"
+            ;;
+    esac
+}
+
+# 主循环
+last_update_id=0
+while true; do
+    updates=$(curl -s "https://api.telegram.org/bot${TG_BOT_TOKEN}/getUpdates?offset=$((last_update_id + 1))&limit=10")
+    
+    # 解析更新
+    echo "$updates" | grep -o '"update_id":[0-9]*' | grep -o '[0-9]*' | while read -r update_id; do
+        [[ "$update_id" -le "$last_update_id" ]] && continue
+        last_update_id=$update_id
+        
+        # 获取消息文本
+        msg_text=$(echo "$updates" | grep -o '"text":"[^"]*"' | grep -o '":"[^"]*' | sed 's/":"//' | tail -1)
+        msg_id=$(echo "$updates" | grep -o '"message_id":[0-9]*' | grep -o '[0-9]*' | tail -1)
+        
+        if [[ -n "$msg_text" ]]; then
+            process_command "$msg_text" "$msg_id"
+        fi
+    done
+    
+    sleep 3
+done
+BOTSCRIPT
+    
+    chmod +x /usr/local/bin/vps-toolbox-bot.sh
+    
+    # 创建 systemd 服务
+    cat > /etc/systemd/system/vps-toolbox-bot.service <<EOF
+[Unit]
+Description=VPS Toolbox Telegram Bot
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/vps-toolbox-bot.sh
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    
+    systemctl daemon-reload
+    systemctl enable vps-toolbox-bot
+    systemctl start vps-toolbox-bot
+    
+    if systemctl is-active --quiet vps-toolbox-bot; then
+        echo -e "${GREEN}Bot 服务已启动!${NC}"
+        echo -e "${YELLOW}发送 /help 给 Bot 查看命令列表${NC}"
+    else
+        echo -e "${RED}Bot 服务启动失败${NC}"
+        systemctl status vps-toolbox-bot --no-pager 2>/dev/null | tail -20
+    fi
+}
+
+# 停止 Bot 服务
+stop_tgbot_service() {
+    systemctl stop vps-toolbox-bot 2>/dev/null || true
+    systemctl disable vps-toolbox-bot 2>/dev/null || true
+    echo -e "${GREEN}Bot 服务已停止${NC}"
+}
+
+# 在安装完成后发送通知
+notify_install_complete() {
+    local protocol="$1"
+    local bot_config="/etc/vps-toolbox/tgbot.conf"
+    
+    [[ ! -f "$bot_config" ]] && return 0
+    
+    local content="✅ *${protocol}* 安装完成
+
+服务器: \`$(hostname)\`
+IP: \`$(get_server_ip)\`
+时间: $(date '+%Y-%m-%d %H:%M:%S')"
+    
+    send_tg_notify "安装完成" "$content"
+}
+
 show_banner() {
     echo ""
     echo -e "${CYAN}============================================================${NC}"
-    echo -e "${GREEN}           VPS Toolbox - 多功能一键部署工具 v2.8.0${NC}"
+    echo -e "${GREEN}           VPS Toolbox - 多功能一键部署工具 v2.9.0${NC}"
     echo -e "${CYAN}============================================================${NC}"
     echo -e "  ${YELLOW}作者${NC}: Kitaro-Loked"
     echo -e "  ${YELLOW}仓库${NC}: https://github.com/Kitaro-Loked/VPS-Toolbox"
@@ -1670,12 +2115,13 @@ show_menu() {
     echo "    10. 网络测速"
     echo "    11. SSL 证书管理"
     echo "    12. 端口占用一览"
+    echo "    13. Telegram Bot 配置"
     echo ""
     echo -e "  ${YELLOW}[管理]${NC}"
-    echo "    13. 查看所有配置"
-    echo "    14. 生成订阅链接"
-    echo "    15. 流量统计"
-    echo "    16. 卸载服务"
+    echo "    14. 查看所有配置"
+    echo "    15. 生成订阅链接"
+    echo "    16. 流量统计"
+    echo "    17. 卸载服务"
     echo "    0. 退出脚本"
     echo ""
     echo -e "${CYAN}============================================================${NC}"
@@ -1689,7 +2135,7 @@ main() {
     
     while true; do
         show_menu
-        read -rp "请选择操作 [0-16]: " choice
+        read -rp "请选择操作 [0-17]: " choice
         
         case $choice in
             1) setup_ddns ;;
@@ -1704,10 +2150,11 @@ main() {
             10) speed_test ;;
             11) manage_cert ;;
             12) port_status ;;
-            13) view_config ;;
-            14) show_subscription ;;
-            15) show_traffic_stats ;;
-            16) uninstall_service ;;
+            13) setup_tgbot ;;
+            14) view_config ;;
+            15) show_subscription ;;
+            16) show_traffic_stats ;;
+            17) uninstall_service ;;
             0)
                 echo -e "${GREEN}感谢使用 VPS Toolbox，再见!${NC}"
                 exit 0
