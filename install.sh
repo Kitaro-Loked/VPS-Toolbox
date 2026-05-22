@@ -6,7 +6,7 @@ sed -i 's/\r$//' "$0" 2>/dev/null || true
 # 功能: DDNS/WARP/Vless/Hysteria2/SS/VMess/HTTPS代理
 # 作者: Kitaro-Loked
 # 仓库: https://github.com/Kitaro-Loked/VPS-Toolbox
-# 版本: 2.9.0
+# 版本: 3.0.0
 # 致谢: 协议安装脚本全部来自 yeahwu/v2ray-wss
 #       https://github.com/yeahwu/v2ray-wss
 #       本项目仅提供菜单封装、DDNS、WARP、订阅链接等管理功能
@@ -2080,10 +2080,653 @@ IP: \`$(get_server_ip)\`
     send_tg_notify "安装完成" "$content"
 }
 
+# 机场订阅管理功能
+# 自动聚合所有协议配置，生成标准订阅链接，支持TG Bot推送
+
+AIRPORT_DIR="/etc/vps-toolbox/airport"
+SUBSCRIPTION_FILE="$AIRPORT_DIR/subscription.txt"
+SUBSCRIPTION_B64="$AIRPORT_DIR/subscription.b64"
+SUBSCRIPTION_MD5="$AIRPORT_DIR/subscription.md5"
+
+# 初始化机场目录
+init_airport() {
+    mkdir -p "$AIRPORT_DIR"
+    [[ ! -f "$SUBSCRIPTION_FILE" ]] && touch "$SUBSCRIPTION_FILE"
+}
+
+# 生成机场订阅内容 (非Base64，原始链接)
+generate_airport_sub() {
+    init_airport
+    
+    local sub_content=""
+    local node_count=0
+    
+    # Vless + Reality
+    if [[ -f /usr/local/etc/xray/reclient.json ]]; then
+        local vless_link=$(grep '"连接链接"' /usr/local/etc/xray/reclient.json 2>/dev/null | sed 's/.*"连接链接": "\(.*\)".*/\1/')
+        if [[ -n "$vless_link" ]]; then
+            sub_content="${sub_content}${vless_link}\n"
+            ((node_count++))
+        fi
+    fi
+    
+    # VMess + WS + TLS
+    if [[ -f /usr/local/etc/xray/client.json ]]; then
+        local vmess_link=$(grep '"连接链接"' /usr/local/etc/xray/client.json 2>/dev/null | sed 's/.*"连接链接": "\(.*\)".*/\1/')
+        if [[ -n "$vmess_link" ]]; then
+            sub_content="${sub_content}${vmess_link}\n"
+            ((node_count++))
+        fi
+    fi
+    
+    # Hysteria2
+    if [[ -f /etc/hysteria/hyclient.json ]]; then
+        local hy2_server=$(jq -r '.server' /etc/hysteria/hyclient.json 2>/dev/null)
+        local hy2_auth=$(jq -r '.auth' /etc/hysteria/hyclient.json 2>/dev/null)
+        local hy2_sni=$(jq -r '.tls.sni // "bing.com"' /etc/hysteria/hyclient.json 2>/dev/null)
+        if [[ -n "$hy2_server" && -n "$hy2_auth" ]]; then
+            local hy2_link="hysteria2://${hy2_auth}@${hy2_server}/?insecure=1&sni=${hy2_sni}#Hysteria2-$(hostname)"
+            sub_content="${sub_content}${hy2_link}\n"
+            ((node_count++))
+        fi
+    fi
+    
+    # Shadowsocks
+    if [[ -f /etc/shadowsocks/config.json ]]; then
+        local ss_ip=$(get_server_ip)
+        local ss_port=$(jq -r '.server_port' /etc/shadowsocks/config.json 2>/dev/null)
+        local ss_pass=$(jq -r '.password' /etc/shadowsocks/config.json 2>/dev/null)
+        local ss_method=$(jq -r '.method' /etc/shadowsocks/config.json 2>/dev/null)
+        if [[ -n "$ss_port" && -n "$ss_pass" && -n "$ss_method" ]]; then
+            local ss_link="ss://$(echo -n "${ss_method}:${ss_pass}" | base64 -w 0)@${ss_ip}:${ss_port}#SS-$(hostname)"
+            sub_content="${sub_content}${ss_link}\n"
+            ((node_count++))
+        fi
+    fi
+    
+    # Trojan (如果存在)
+    if [[ -f /usr/local/etc/xray/trojan.json ]]; then
+        local trojan_pass=$(jq -r '.inbounds[0].settings.clients[0].password // empty' /usr/local/etc/xray/trojan.json 2>/dev/null)
+        local trojan_port=$(jq -r '.inbounds[0].port // empty' /usr/local/etc/xray/trojan.json 2>/dev/null)
+        if [[ -n "$trojan_pass" && -n "$trojan_port" ]]; then
+            local trojan_link="trojan://${trojan_pass}@$(get_server_ip):${trojan_port}#Trojan-$(hostname)"
+            sub_content="${sub_content}${trojan_link}\n"
+            ((node_count++))
+        fi
+    fi
+    
+    # 保存原始订阅内容
+    echo -e "$sub_content" > "$SUBSCRIPTION_FILE"
+    
+    # 生成 Base64 订阅
+    local sub_b64=$(echo -e "$sub_content" | base64 -w 0)
+    echo "$sub_b64" > "$SUBSCRIPTION_B64"
+    
+    # 计算 MD5 用于检测变化
+    local new_md5=$(echo -e "$sub_content" | md5sum | awk '{print $1}')
+    echo "$new_md5" > "$SUBSCRIPTION_MD5"
+    
+    echo "$node_count"
+}
+
+# 显示机场订阅管理菜单
+airport_manager() {
+    init_airport
+    
+    while true; do
+        clear
+        echo ""
+        echo -e "${CYAN}============================================================${NC}"
+        echo -e "${CYAN}                    机场订阅管理${NC}"
+        echo -e "${CYAN}============================================================${NC}"
+        echo ""
+        
+        # 生成最新订阅
+        local node_count=$(generate_airport_sub)
+        local sub_b64=$(cat "$SUBSCRIPTION_B64" 2>/dev/null)
+        local server_ip=$(get_server_ip)
+        
+        echo -e "${GREEN}当前节点数: ${node_count}${NC}"
+        echo ""
+        echo -e "${YELLOW}订阅链接:${NC}"
+        echo -e "  ${GREEN}http://${server_ip}/sub${NC} (需配合 Nginx/Caddy)"
+        echo -e "  ${GREEN}http://${server_ip}:8080/sub${NC} (内置 HTTP 服务)"
+        echo ""
+        echo -e "${YELLOW}Base64 订阅内容 (前100字符):${NC}"
+        echo "  ${sub_b64:0:100}..."
+        echo ""
+        echo -e "${CYAN}============================================================${NC}"
+        echo ""
+        echo -e "${YELLOW}操作选项:${NC}"
+        echo "  1. 查看所有节点详情"
+        echo "  2. 复制订阅链接到剪贴板 (SSH终端显示)"
+        echo "  3. 通过 Telegram Bot 推送订阅"
+        echo "  4. 设置自动更新推送 (cron)"
+        echo "  5. 启动内置 HTTP 订阅服务"
+        echo "  6. 配置 Nginx/Caddy 订阅路径"
+        echo "  7. 测试订阅链接可用性"
+        echo "  8. 返回主菜单"
+        echo ""
+        read -rp "请选择 [1-8]: " airport_choice
+        
+        case $airport_choice in
+            1)
+                show_nodes_detail
+                ;;
+            2)
+                echo ""
+                echo -e "${GREEN}订阅链接 (Base64):${NC}"
+                echo ""
+                echo "$sub_b64"
+                echo ""
+                echo -e "${YELLOW}完整链接:${NC}"
+                echo "http://${server_ip}:8080/sub"
+                ;;
+            3)
+                push_sub_to_telegram
+                ;;
+            4)
+                setup_auto_update_push
+                ;;
+            5)
+                start_sub_http_server
+                ;;
+            6)
+                setup_nginx_sub_path
+                ;;
+            7)
+                test_subscription
+                ;;
+            8)
+                return
+                ;;
+            *)
+                warn "无效选择"
+                ;;
+        esac
+        
+        echo ""
+        read -rp "按回车键继续..."
+    done
+}
+
+# 显示节点详情
+show_nodes_detail() {
+    echo ""
+    echo -e "${CYAN}============================================================${NC}"
+    echo -e "${CYAN}                    节点详情${NC}"
+    echo -e "${CYAN}============================================================${NC}"
+    echo ""
+    
+    local idx=1
+    
+    # Vless
+    if [[ -f /usr/local/etc/xray/reclient.json ]]; then
+        echo -e "${GREEN}[$idx] Vless + Reality${NC}"
+        local addr=$(jq -r '.地址 // empty' /usr/local/etc/xray/reclient.json 2>/dev/null)
+        local port=$(jq -r '.端口 // empty' /usr/local/etc/xray/reclient.json 2>/dev/null)
+        local id=$(jq -r '.UUID // empty' /usr/local/etc/xray/reclient.json 2>/dev/null)
+        local sni=$(jq -r '.SNI // empty' /usr/local/etc/xray/reclient.json 2>/dev/null)
+        echo "  地址: $addr"
+        echo "  端口: $port"
+        echo "  UUID: ${id:0:8}..."
+        echo "  SNI: $sni"
+        echo ""
+        ((idx++))
+    fi
+    
+    # VMess
+    if [[ -f /usr/local/etc/xray/client.json ]]; then
+        echo -e "${GREEN}[$idx] VMess + WS + TLS${NC}"
+        local vm_addr=$(jq -r '.地址 // empty' /usr/local/etc/xray/client.json 2>/dev/null)
+        local vm_port=$(jq -r '.端口 // empty' /usr/local/etc/xray/client.json 2>/dev/null)
+        echo "  地址: $vm_addr"
+        echo "  端口: $vm_port"
+        echo ""
+        ((idx++))
+    fi
+    
+    # Hysteria2
+    if [[ -f /etc/hysteria/hyclient.json ]]; then
+        echo -e "${GREEN}[$idx] Hysteria2${NC}"
+        local hy_srv=$(jq -r '.server' /etc/hysteria/hyclient.json 2>/dev/null)
+        local hy_sni=$(jq -r '.tls.sni // "bing.com"' /etc/hysteria/hyclient.json 2>/dev/null)
+        echo "  服务器: $hy_srv"
+        echo "  SNI: $hy_sni"
+        echo ""
+        ((idx++))
+    fi
+    
+    # Shadowsocks
+    if [[ -f /etc/shadowsocks/config.json ]]; then
+        echo -e "${GREEN}[$idx] Shadowsocks${NC}"
+        local ss_port=$(jq -r '.server_port' /etc/shadowsocks/config.json 2>/dev/null)
+        local ss_method=$(jq -r '.method' /etc/shadowsocks/config.json 2>/dev/null)
+        echo "  端口: $ss_port"
+        echo "  加密: $ss_method"
+        echo ""
+        ((idx++))
+    fi
+}
+
+# 推送订阅到 Telegram
+push_sub_to_telegram() {
+    local bot_config="/etc/vps-toolbox/tgbot.conf"
+    
+    if [[ ! -f "$bot_config" ]]; then
+        echo -e "${RED}Telegram Bot 未配置${NC}"
+        echo -e "${YELLOW}请先配置 Bot: 主菜单 -> 工具 -> Telegram Bot 配置${NC}"
+        return 1
+    fi
+    
+    source "$bot_config"
+    
+    if [[ -z "$TG_BOT_TOKEN" || -z "$TG_CHAT_ID" ]]; then
+        echo -e "${RED}Bot Token 或 Chat ID 为空${NC}"
+        return 1
+    fi
+    
+    # 生成最新订阅
+    local node_count=$(generate_airport_sub)
+    local sub_b64=$(cat "$SUBSCRIPTION_B64" 2>/dev/null)
+    local server_ip=$(get_server_ip)
+    
+    if [[ -z "$sub_b64" ]]; then
+        echo -e "${RED}订阅内容为空，请先安装代理协议${NC}"
+        return 1
+    fi
+    
+    # 构建消息
+    local message="✈️ *机场订阅更新*
+
+📊 *节点信息:*
+"
+    
+    # 添加节点列表
+    local idx=1
+    [[ -f /usr/local/etc/xray/reclient.json ]] && message="${message}  ${idx}. Vless + Reality\n" && ((idx++))
+    [[ -f /usr/local/etc/xray/client.json ]] && message="${message}  ${idx}. VMess + WS + TLS\n" && ((idx++))
+    [[ -f /etc/hysteria/hyclient.json ]] && message="${message}  ${idx}. Hysteria2\n" && ((idx++))
+    [[ -f /etc/shadowsocks/config.json ]] && message="${message}  ${idx}. Shadowsocks\n" && ((idx++))
+    
+    message="${message}
+📡 *订阅链接:*
+\`http://${server_ip}:8080/sub\`
+
+📋 *Base64 订阅:*
+\`${sub_b64}\`
+
+⏰ 更新时间: $(date '+%Y-%m-%d %H:%M:%S')"
+    
+    # 发送消息
+    local response=$(curl -s -X POST "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" \
+        -d "chat_id=${TG_CHAT_ID}" \
+        -d "text=${message}" \
+        -d "parse_mode=Markdown" \
+        -d "disable_web_page_preview=true")
+    
+    if echo "$response" | grep -q '"ok":true'; then
+        echo -e "${GREEN}订阅已推送到 Telegram!${NC}"
+    else
+        echo -e "${RED}推送失败: $response${NC}"
+        return 1
+    fi
+}
+
+# 设置自动更新推送
+setup_auto_update_push() {
+    echo ""
+    echo -e "${YELLOW}设置自动推送...${NC}"
+    echo ""
+    echo "  1. 每小时检查更新并推送"
+    echo "  2. 每天检查更新并推送"
+    echo "  3. 每周检查更新并推送"
+    echo "  4. 关闭自动推送"
+    echo "  5. 返回"
+    echo ""
+    read -rp "请选择 [1-5]: " auto_choice
+    
+    local cron_expr=""
+    case $auto_choice in
+        1) cron_expr="0 * * * *" ;;
+        2) cron_expr="0 8 * * *" ;;
+        3) cron_expr="0 8 * * 1" ;;
+        4)
+            crontab -l 2>/dev/null | grep -v "vps-toolbox-airport" | crontab -
+            echo -e "${GREEN}自动推送已关闭${NC}"
+            return
+            ;;
+        5) return ;;
+        *) warn "无效选择"; return ;;
+    esac
+    
+    # 创建自动推送脚本
+    cat > /usr/local/bin/vps-toolbox-airport-push.sh <<'PUSHSCRIPT'
+#!/bin/bash
+# VPS Toolbox 机场订阅自动推送
+
+AIRPORT_DIR="/etc/vps-toolbox/airport"
+SUBSCRIPTION_FILE="$AIRPORT_DIR/subscription.txt"
+SUBSCRIPTION_MD5="$AIRPORT_DIR/subscription.md5"
+BOT_CONFIG="/etc/vps-toolbox/tgbot.conf"
+
+# 加载 Bot 配置
+[[ ! -f "$BOT_CONFIG" ]] && exit 0
+source "$BOT_CONFIG"
+[[ -z "$TG_BOT_TOKEN" || -z "$TG_CHAT_ID" ]] && exit 0
+
+# 加载机场函数
+source /usr/local/bin/vps-toolbox-airport-lib.sh 2>/dev/null || exit 0
+
+# 生成新订阅
+node_count=$(generate_airport_sub)
+new_md5=$(cat "$SUBSCRIPTION_MD5" 2>/dev/null)
+old_md5=$(cat "$SUBSCRIPTION_MD5.old" 2>/dev/null)
+
+# 如果内容变化或首次运行，推送更新
+if [[ "$new_md5" != "$old_md5" ]]; then
+    server_ip=$(curl -s ip.sb 2>/dev/null || echo "127.0.0.1")
+    sub_b64=$(cat "$SUBSCRIPTION_B64" 2>/dev/null)
+    
+    message="✈️ *机场订阅自动更新*
+
+📊 *节点数: ${node_count}*
+"
+    
+    # 检测变化类型
+    if [[ -z "$old_md5" ]]; then
+        message="${message}\n🆕 *首次推送*"
+    else
+        message="${message}\n🔄 *配置已变更*"
+    fi
+    
+    message="${message}
+
+📡 *订阅链接:*
+\`http://${server_ip}:8080/sub\`
+
+📋 *Base64 订阅:*
+\`${sub_b64}\`
+
+⏰ 更新时间: $(date '+%Y-%m-%d %H:%M:%S')"
+    
+    curl -s -X POST "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" \
+        -d "chat_id=${TG_CHAT_ID}" \
+        -d "text=${message}" \
+        -d "parse_mode=Markdown" \
+        -d "disable_web_page_preview=true" >/dev/null
+    
+    # 保存旧 MD5
+    cp "$SUBSCRIPTION_MD5" "$SUBSCRIPTION_MD5.old"
+fi
+PUSHSCRIPT
+    
+    chmod +x /usr/local/bin/vps-toolbox-airport-push.sh
+    
+    # 创建库文件
+    cat > /usr/local/bin/vps-toolbox-airport-lib.sh <<'LIBSCRIPT'
+#!/bin/bash
+# 机场订阅库函数
+
+AIRPORT_DIR="/etc/vps-toolbox/airport"
+SUBSCRIPTION_FILE="$AIRPORT_DIR/subscription.txt"
+SUBSCRIPTION_B64="$AIRPORT_DIR/subscription.b64"
+SUBSCRIPTION_MD5="$AIRPORT_DIR/subscription.md5"
+
+get_server_ip() {
+    curl -s ip.sb 2>/dev/null || curl -s ipinfo.io/ip 2>/dev/null || echo "127.0.0.1"
+}
+
+generate_airport_sub() {
+    mkdir -p "$AIRPORT_DIR"
+    local sub_content=""
+    local node_count=0
+    
+    if [[ -f /usr/local/etc/xray/reclient.json ]]; then
+        local vless_link=$(grep '"连接链接"' /usr/local/etc/xray/reclient.json 2>/dev/null | sed 's/.*"连接链接": "\(.*\)".*/\1/')
+        [[ -n "$vless_link" ]] && sub_content="${sub_content}${vless_link}\n" && ((node_count++))
+    fi
+    
+    if [[ -f /usr/local/etc/xray/client.json ]]; then
+        local vmess_link=$(grep '"连接链接"' /usr/local/etc/xray/client.json 2>/dev/null | sed 's/.*"连接链接": "\(.*\)".*/\1/')
+        [[ -n "$vmess_link" ]] && sub_content="${sub_content}${vmess_link}\n" && ((node_count++))
+    fi
+    
+    if [[ -f /etc/hysteria/hyclient.json ]]; then
+        local hy2_server=$(jq -r '.server' /etc/hysteria/hyclient.json 2>/dev/null)
+        local hy2_auth=$(jq -r '.auth' /etc/hysteria/hyclient.json 2>/dev/null)
+        local hy2_sni=$(jq -r '.tls.sni // "bing.com"' /etc/hysteria/hyclient.json 2>/dev/null)
+        if [[ -n "$hy2_server" && -n "$hy2_auth" ]]; then
+            sub_content="${sub_content}hysteria2://${hy2_auth}@${hy2_server}/?insecure=1&sni=${hy2_sni}#Hysteria2-$(hostname)\n"
+            ((node_count++))
+        fi
+    fi
+    
+    if [[ -f /etc/shadowsocks/config.json ]]; then
+        local ss_ip=$(get_server_ip)
+        local ss_port=$(jq -r '.server_port' /etc/shadowsocks/config.json 2>/dev/null)
+        local ss_pass=$(jq -r '.password' /etc/shadowsocks/config.json 2>/dev/null)
+        local ss_method=$(jq -r '.method' /etc/shadowsocks/config.json 2>/dev/null)
+        if [[ -n "$ss_port" && -n "$ss_pass" && -n "$ss_method" ]]; then
+            sub_content="${sub_content}ss://$(echo -n "${ss_method}:${ss_pass}" | base64 -w 0)@${ss_ip}:${ss_port}#SS-$(hostname)\n"
+            ((node_count++))
+        fi
+    fi
+    
+    echo -e "$sub_content" > "$SUBSCRIPTION_FILE"
+    echo -e "$sub_content" | base64 -w 0 > "$SUBSCRIPTION_B64"
+    echo -e "$sub_content" | md5sum | awk '{print $1}' > "$SUBSCRIPTION_MD5"
+    
+    echo "$node_count"
+}
+LIBSCRIPT
+    
+    chmod +x /usr/local/bin/vps-toolbox-airport-lib.sh
+    
+    # 添加 cron 任务
+    (crontab -l 2>/dev/null | grep -v "vps-toolbox-airport"; echo "$cron_expr /usr/local/bin/vps-toolbox-airport-push.sh >/dev/null 2>&1") | crontab -
+    
+    echo -e "${GREEN}自动推送已设置!${NC}"
+    echo -e "${YELLOW}Cron 表达式: $cron_expr${NC}"
+    echo -e "${YELLOW}推送脚本: /usr/local/bin/vps-toolbox-airport-push.sh${NC}"
+}
+
+# 启动内置 HTTP 订阅服务
+start_sub_http_server() {
+    local server_ip=$(get_server_ip)
+    
+    echo ""
+    echo -e "${YELLOW}启动内置 HTTP 订阅服务...${NC}"
+    
+    # 检查是否已有服务在运行
+    if ss -tlnp | grep -q ":8080"; then
+        echo -e "${YELLOW}端口 8080 已被占用${NC}"
+        ss -tlnp | grep ":8080"
+        echo ""
+        echo -e "${YELLOW}是否强制重启? [y/N]:${NC} "
+        read -r confirm
+        if [[ "$confirm" == "y" || "$confirm" == "Y" ]]; then
+            local pid=$(ss -tlnp | grep ":8080" | grep -o 'pid=[0-9]*' | cut -d= -f2)
+            [[ -n "$pid" ]] && kill "$pid" 2>/dev/null
+        else
+            return
+        fi
+    fi
+    
+    # 创建简单的 HTTP 服务脚本
+    cat > /usr/local/bin/vps-toolbox-sub-server.py <<'PYSCRIPT'
+#!/usr/bin/env python3
+import http.server
+import socketserver
+import os
+
+PORT = 8080
+SUB_FILE = "/etc/vps-toolbox/airport/subscription.b64"
+
+class SubHandler(http.server.SimpleHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == '/sub' or self.path == '/subscribe':
+            self.send_response(200)
+            self.send_header('Content-type', 'text/plain; charset=utf-8')
+            self.send_header('Subscription-Userinfo', 'upload=0; download=0; total=0; expire=0')
+            self.send_header('Profile-Update-Interval', '1')
+            self.end_headers()
+            
+            if os.path.exists(SUB_FILE):
+                with open(SUB_FILE, 'r') as f:
+                    self.wfile.write(f.read().encode())
+            else:
+                self.wfile.write(b"")
+        elif self.path == '/':
+            self.send_response(200)
+            self.send_header('Content-type', 'text/html')
+            self.end_headers()
+            self.wfile.write(b"""
+<!DOCTYPE html>
+<html>
+<head><title>VPS Toolbox Airport</title></head>
+<body>
+<h1>VPS Toolbox Airport</h1>
+<p>订阅路径: /sub</p>
+<p>示例: http://this-server:8080/sub</p>
+</body>
+</html>
+""")
+        else:
+            self.send_response(404)
+            self.end_headers()
+    
+    def log_message(self, format, *args):
+        pass  # 静默日志
+
+with socketserver.TCPServer(("0.0.0.0", PORT), SubHandler) as httpd:
+    httpd.serve_forever()
+PYSCRIPT
+    
+    chmod +x /usr/local/bin/vps-toolbox-sub-server.py
+    
+    # 使用 nohup 启动
+    nohup python3 /usr/local/bin/vps-toolbox-sub-server.py >/dev/null 2>&1 &
+    sleep 1
+    
+    if ss -tlnp | grep -q ":8080"; then
+        echo -e "${GREEN}HTTP 订阅服务已启动!${NC}"
+        echo -e "  订阅地址: ${GREEN}http://${server_ip}:8080/sub${NC}"
+        echo -e "  网页地址: ${GREEN}http://${server_ip}:8080/${NC}"
+        echo ""
+        echo -e "${YELLOW}提示: 重启后需要手动重新启动${NC}"
+        echo -e "${YELLOW}或使用 systemd 服务保持运行${NC}"
+    else
+        echo -e "${RED}启动失败${NC}"
+    fi
+}
+
+# 配置 Nginx/Caddy 订阅路径
+setup_nginx_sub_path() {
+    local server_ip=$(get_server_ip)
+    
+    echo ""
+    echo -e "${YELLOW}配置 Web 服务器订阅路径...${NC}"
+    
+    if command -v nginx &>/dev/null; then
+        # Nginx 配置
+        local nginx_conf="/etc/nginx/conf.d/vps-toolbox-sub.conf"
+        cat > "$nginx_conf" <<EOF
+server {
+    listen 80;
+    server_name ${server_ip};
+    
+    location /sub {
+        alias /etc/vps-toolbox/airport/subscription.b64;
+        default_type text/plain;
+        add_header Subscription-Userinfo "upload=0; download=0; total=0; expire=0";
+        add_header Profile-Update-Interval "1";
+    }
+    
+    location / {
+        return 200 'VPS Toolbox Airport\n订阅路径: /sub\n';
+        default_type text/plain;
+    }
+}
+EOF
+        nginx -t 2>/dev/null && systemctl reload nginx 2>/dev/null
+        echo -e "${GREEN}Nginx 配置已添加${NC}"
+        echo -e "  订阅地址: ${GREEN}http://${server_ip}/sub${NC}"
+        
+    elif command -v caddy &>/dev/null; then
+        # Caddy 配置
+        local caddy_conf="/etc/caddy/Caddyfile.vps-toolbox"
+        cat > "$caddy_conf" <<EOF
+${server_ip} {
+    route /sub {
+        header Content-Type text/plain
+        header Subscription-Userinfo "upload=0; download=0; total=0; expire=0"
+        header Profile-Update-Interval "1"
+        file_server {
+            root /etc/vps-toolbox/airport
+        }
+        rewrite * /subscription.b64
+    }
+    
+    respond / "VPS Toolbox Airport\n订阅路径: /sub\n"
+}
+EOF
+        echo -e "${GREEN}Caddy 配置已生成: $caddy_conf${NC}"
+        echo -e "${YELLOW}请手动将配置导入主 Caddyfile${NC}"
+        
+    else
+        echo -e "${YELLOW}未检测到 Nginx 或 Caddy${NC}"
+        echo -e "${YELLOW}将使用内置 HTTP 服务 (端口 8080)${NC}"
+        start_sub_http_server
+    fi
+}
+
+# 测试订阅链接
+test_subscription() {
+    local server_ip=$(get_server_ip)
+    
+    echo ""
+    echo -e "${YELLOW}测试订阅链接...${NC}"
+    echo ""
+    
+    # 测试本地
+    echo -e "${GREEN}1. 本地测试:${NC}"
+    local local_sub=$(curl -s "http://127.0.0.1:8080/sub" 2>/dev/null | head -c 100)
+    if [[ -n "$local_sub" ]]; then
+        echo -e "  ${GREEN}✓ 127.0.0.1:8080/sub 正常${NC}"
+        echo "  内容前100字符: ${local_sub}"
+    else
+        echo -e "  ${RED}✗ 127.0.0.1:8080/sub 无法访问${NC}"
+    fi
+    
+    # 测试公网
+    echo ""
+    echo -e "${GREEN}2. 公网测试:${NC}"
+    local public_sub=$(curl -s "http://${server_ip}:8080/sub" 2>/dev/null | head -c 100)
+    if [[ -n "$public_sub" ]]; then
+        echo -e "  ${GREEN}✓ ${server_ip}:8080/sub 正常${NC}"
+    else
+        echo -e "  ${RED}✗ ${server_ip}:8080/sub 无法访问${NC}"
+        echo -e "  ${YELLOW}可能原因: 防火墙未开放 8080 端口${NC}"
+    fi
+    
+    # 解码测试
+    echo ""
+    echo -e "${GREEN}3. Base64 解码测试:${NC}"
+    local decoded=$(curl -s "http://127.0.0.1:8080/sub" 2>/dev/null | base64 -d 2>/dev/null | head -5)
+    if [[ -n "$decoded" ]]; then
+        echo -e "  ${GREEN}✓ Base64 解码正常${NC}"
+        echo "  解码内容:"
+        echo "$decoded" | sed 's/^/    /'
+    else
+        echo -e "  ${RED}✗ Base64 解码失败${NC}"
+    fi
+}
+
 show_banner() {
     echo ""
     echo -e "${CYAN}============================================================${NC}"
-    echo -e "${GREEN}           VPS Toolbox - 多功能一键部署工具 v2.9.0${NC}"
+    echo -e "${GREEN}           VPS Toolbox - 多功能一键部署工具 v3.0.0${NC}"
     echo -e "${CYAN}============================================================${NC}"
     echo -e "  ${YELLOW}作者${NC}: Kitaro-Loked"
     echo -e "  ${YELLOW}仓库${NC}: https://github.com/Kitaro-Loked/VPS-Toolbox"
@@ -2117,11 +2760,16 @@ show_menu() {
     echo "    12. 端口占用一览"
     echo "    13. Telegram Bot 配置"
     echo ""
+    echo -e "  ${YELLOW}[机场订阅]${NC}"
+    echo "    14. 机场订阅管理"
+    echo "    15. 推送订阅到 Telegram"
+    echo "    16. 启动 HTTP 订阅服务"
+    echo ""
     echo -e "  ${YELLOW}[管理]${NC}"
-    echo "    14. 查看所有配置"
-    echo "    15. 生成订阅链接"
-    echo "    16. 流量统计"
-    echo "    17. 卸载服务"
+    echo "    17. 查看所有配置"
+    echo "    18. 生成订阅链接"
+    echo "    19. 流量统计"
+    echo "    20. 卸载服务"
     echo "    0. 退出脚本"
     echo ""
     echo -e "${CYAN}============================================================${NC}"
@@ -2135,7 +2783,7 @@ main() {
     
     while true; do
         show_menu
-        read -rp "请选择操作 [0-17]: " choice
+        read -rp "请选择操作 [0-20]: " choice
         
         case $choice in
             1) setup_ddns ;;
@@ -2151,10 +2799,13 @@ main() {
             11) manage_cert ;;
             12) port_status ;;
             13) setup_tgbot ;;
-            14) view_config ;;
-            15) show_subscription ;;
-            16) show_traffic_stats ;;
-            17) uninstall_service ;;
+            14) airport_manager ;;
+            15) push_sub_to_telegram ;;
+            16) start_sub_http_server ;;
+            17) view_config ;;
+            18) show_subscription ;;
+            19) show_traffic_stats ;;
+            20) uninstall_service ;;
             0)
                 echo -e "${GREEN}感谢使用 VPS Toolbox，再见!${NC}"
                 exit 0
