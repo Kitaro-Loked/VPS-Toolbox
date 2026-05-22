@@ -657,6 +657,181 @@ uninstall_service() {
 
 # ==================== 主菜单 ====================
 
+# 流量统计功能
+show_traffic_stats() {
+    clear
+    echo ""
+    echo -e "${CYAN}============================================================${NC}"
+    echo -e "${CYAN}                    流量使用统计${NC}"
+    echo -e "${CYAN}============================================================${NC}"
+    echo ""
+    
+    local has_data=false
+    
+    # Xray 协议流量统计 (Vless + VMess)
+    if [[ -f /usr/local/bin/xray ]] && command -v xray &>/dev/null; then
+        # 检查 xray API 是否可用
+        local xray_api_port=""
+        if [[ -f /usr/local/etc/xray/config.json ]]; then
+            xray_api_port=$(jq -r '.api?.tag // empty' /usr/local/etc/xray/config.json 2>/dev/null)
+        fi
+        
+        # 尝试通过 xray API 获取流量
+        if [[ -n "$xray_api_port" ]] && timeout 2 xray api statsquery --server=127.0.0.1:10085 &>/dev/null; then
+            echo -e "${GREEN}[Xray 协议流量]${NC}"
+            local stats_output=$(timeout 3 xray api statsquery --server=127.0.0.1:10085 2>/dev/null | jq -r '.stat[]? | select(.value != "0") | "\(.name): \(.value)"' 2>/dev/null)
+            if [[ -n "$stats_output" ]]; then
+                echo "$stats_output" | while read -r line; do
+                    local name=$(echo "$line" | cut -d: -f1)
+                    local value=$(echo "$line" | cut -d: -f2-)
+                    # Convert bytes to human readable
+                    local bytes=$value
+                    if [[ "$bytes" -gt 1073741824 ]]; then
+                        printf "  %-30s %6.2f GB\n" "$name" $(echo "scale=2; $bytes/1073741824" | bc)
+                    elif [[ "$bytes" -gt 1048576 ]]; then
+                        printf "  %-30s %6.2f MB\n" "$name" $(echo "scale=2; $bytes/1048576" | bc)
+                    elif [[ "$bytes" -gt 1024 ]]; then
+                        printf "  %-30s %6.2f KB\n" "$name" $(echo "scale=2; $bytes/1024" | bc)
+                    else
+                        printf "  %-30s %6d B\n" "$name" "$bytes"
+                    fi
+                done
+                has_data=true
+            else
+                echo -e "  ${YELLOW}暂无流量数据${NC}"
+            fi
+        else
+            # 回退到日志解析方式
+            if [[ -f /var/log/xray/access.log ]]; then
+                echo -e "${GREEN}[Xray 协议流量 - 基于日志估算]${NC}"
+                # 统计今日连接数作为活跃度参考
+                local today=$(date +%Y/%m/%d)
+                local today_connections=$(grep -c "$today" /var/log/xray/access.log 2>/dev/null)
+                if [[ $? -ne 0 ]]; then
+                    today_connections=0
+                fi
+                echo -e "  今日连接数: $today_connections"
+                
+                # 显示最近的访问记录
+                echo -e "  ${YELLOW}最近 5 条访问记录:${NC}"
+                tail -5 /var/log/xray/access.log 2>/dev/null | while read -r line; do
+                    echo "    $line"
+                done
+                has_data=true
+            else
+                echo -e "  ${YELLOW}Xray 日志文件不存在${NC}"
+            fi
+        fi
+        echo ""
+    fi
+    
+    # Hysteria2 流量统计
+    if [[ -f /usr/local/bin/hysteria ]] || [[ -f /usr/local/bin/hysteria2 ]]; then
+        echo -e "${GREEN}[Hysteria2 流量]${NC}"
+        
+        # 检查 hysteria2 是否运行
+        local hy_active=false
+        if systemctl is-active --quiet hysteria-server 2>/dev/null; then
+            hy_active=true
+        elif systemctl is-active --quiet hysteria2 2>/dev/null; then
+            hy_active=true
+        fi
+        
+        if [[ "$hy_active" == true ]]; then
+            echo -e "  ${GREEN}服务状态: 运行中${NC}"
+            
+            # 检查是否有流量日志
+            local log_file=""
+            if [[ -f /var/log/hysteria/server.log ]]; then
+                log_file="/var/log/hysteria/server.log"
+            elif [[ -f /var/log/hysteria2/server.log ]]; then
+                log_file="/var/log/hysteria2/server.log"
+            fi
+            
+            if [[ -n "$log_file" ]]; then
+                local today_upload=$(grep -oE 'upload=[0-9]+' "$log_file" 2>/dev/null | tail -1 | cut -d= -f2)
+                local today_download=$(grep -oE 'download=[0-9]+' "$log_file" 2>/dev/null | tail -1 | cut -d= -f2)
+                
+                if [[ -n "$today_upload" ]]; then
+                    local upload_human=$(numfmt --to=iec "$today_upload" 2>/dev/null)
+                    if [[ -z "$upload_human" ]]; then
+                        upload_human="$today_upload bytes"
+                    fi
+                    echo -e "  上传: $upload_human"
+                fi
+                if [[ -n "$today_download" ]]; then
+                    local download_human=$(numfmt --to=iec "$today_download" 2>/dev/null)
+                    if [[ -z "$download_human" ]]; then
+                        download_human="$today_download bytes"
+                    fi
+                    echo -e "  下载: $download_human"
+                fi
+            else
+                echo -e "  ${YELLOW}Hysteria2 流量日志未启用${NC}"
+            fi
+        else
+            echo -e "  ${YELLOW}Hysteria2 服务未运行${NC}"
+        fi
+        has_data=true
+        echo ""
+    fi
+    
+    # Shadowsocks 流量统计
+    if [[ -f /usr/local/bin/ssserver ]] || [[ -f /usr/local/bin/ss-server ]]; then
+        echo -e "${GREEN}[Shadowsocks-rust 流量]${NC}"
+        
+        local ss_active=false
+        if systemctl is-active --quiet shadowsocks-rust 2>/dev/null; then
+            ss_active=true
+        elif systemctl is-active --quiet shadowsocks 2>/dev/null; then
+            ss_active=true
+        fi
+        
+        if [[ "$ss_active" == true ]]; then
+            echo -e "  ${GREEN}服务状态: 运行中${NC}"
+            
+            # 尝试从配置文件获取端口
+            if [[ -f /etc/shadowsocks/config.json ]]; then
+                local ss_port=$(jq -r '.server_port' /etc/shadowsocks/config.json 2>/dev/null)
+                echo -e "  端口: $ss_port"
+            fi
+            
+            # SS-rust 可以通过 verbose 日志查看流量，但默认可能未启用
+            echo -e "  ${YELLOW}提示: Shadowsocks-rust 默认不记录流量统计${NC}"
+            echo -e "  ${YELLOW}如需流量统计，建议配合 vnStat 使用${NC}"
+        else
+            echo -e "  ${YELLOW}Shadowsocks 服务未运行${NC}"
+        fi
+        has_data=true
+        echo ""
+    fi
+    
+    # 系统总流量 (vnStat)
+    if command -v vnstat &>/dev/null; then
+        echo -e "${GREEN}[系统总流量 (vnStat)]${NC}"
+        local main_iface=$(ip route | grep default | awk '{print $5}' | head -1)
+        if [[ -n "$main_iface" ]]; then
+            echo -e "  接口: $main_iface"
+            local vnstat_output=$(vnstat -i "$main_iface" --oneline 2>/dev/null)
+            if [[ -n "$vnstat_output" ]]; then
+                echo "$vnstat_output" | awk -F';' '{printf "  今日: %s  本月: %s\n", $4, $11}'
+            else
+                echo -e "  ${YELLOW}vnStat 数据不可用${NC}"
+            fi
+        fi
+        has_data=true
+        echo ""
+    fi
+    
+    if [[ "$has_data" == false ]]; then
+        echo -e "${YELLOW}尚未安装任何代理服务，无流量数据${NC}"
+    fi
+    
+    echo -e "${CYAN}============================================================${NC}"
+    echo ""
+    read -rp "按回车键继续..."
+}
+
 show_banner() {
     echo ""
     echo -e "${CYAN}============================================================${NC}"
@@ -687,7 +862,8 @@ show_menu() {
     echo -e "  ${YELLOW}[管理]${NC}"
     echo "    8. 查看所有配置"
     echo "    9. 生成订阅链接"
-    echo "    10. 卸载服务"
+    echo "    10. 流量统计"
+    echo "    11. 卸载服务"
     echo "    0. 退出脚本"
     echo ""
     echo -e "${CYAN}============================================================${NC}"
@@ -701,7 +877,7 @@ main() {
     
     while true; do
         show_menu
-        read -rp "请选择操作 [0-10]: " choice
+        read -rp "请选择操作 [0-11]: " choice
         
         case $choice in
             1) setup_ddns ;;
@@ -713,7 +889,8 @@ main() {
             7) install_https_proxy ;;
             8) view_config ;;
             9) show_subscription ;;
-            10) uninstall_service ;;
+            10) show_traffic_stats ;;
+            11) uninstall_service ;;
             0)
                 echo -e "${GREEN}感谢使用 VPS Toolbox，再见!${NC}"
                 exit 0
