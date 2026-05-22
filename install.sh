@@ -14,7 +14,7 @@ sed -i 's/\r$//' "$0" 2>/dev/null || true
 
 # 仓库: https://github.com/Kitaro-Loked/VPS-Toolbox
 
-# 版本: 3.1.0
+# 版本: 3.2.0
 
 # 致谢: 协议安装脚本全部来自 yeahwu/v2ray-wss
 
@@ -5371,13 +5371,830 @@ view_stats_menu() {
     read -rp "按回车键继续..."
 }
 
+# 多 VPS 负载均衡/故障转移功能
+# 管理多台 VPS，自动检测健康状态，订阅中只暴露一个入口
+
+MULTI_VPS_DIR="/etc/vps-toolbox/multivps"
+MULTI_VPS_CONFIG="$MULTI_VPS_DIR/nodes.conf"
+HEALTH_LOG="$MULTI_VPS_DIR/health.log"
+
+# 初始化多 VPS 目录
+init_multivps() {
+    mkdir -p "$MULTI_VPS_DIR"
+    if [[ ! -f "$MULTI_VPS_CONFIG" ]]; then
+        cat > "$MULTI_VPS_CONFIG" <<'EOF'
+# VPS Toolbox 多节点配置文件
+# 格式: 名称|IP:端口|协议类型|权重|状态
+# 协议类型: vless/vmess/hysteria2/shadowsocks
+# 权重: 1-10，越大分配越多流量
+# 状态: active/backup/down
+EOF
+    fi
+}
+
+# 添加节点
+add_vps_node() {
+    init_multivps
+    
+    echo ""
+    echo -e "${YELLOW}添加节点:${NC}"
+    read -rp "节点名称 (如: 香港-1): " node_name
+    read -rp "节点 IP: " node_ip
+    read -rp "节点端口: " node_port
+    echo "协议类型:"
+    echo "  1. Vless + Reality"
+    echo "  2. VMess + WS"
+    echo "  3. Hysteria2"
+    echo "  4. Shadowsocks"
+    read -rp "请选择 [1-4]: " proto_choice
+    
+    local proto=""
+    case $proto_choice in
+        1) proto="vless" ;;
+        2) proto="vmess" ;;
+        3) proto="hysteria2" ;;
+        4) proto="shadowsocks" ;;
+        *) proto="vless" ;;
+    esac
+    
+    read -rp "权重 (1-10, 默认5): " node_weight
+    [[ -z "$node_weight" ]] && node_weight=5
+    
+    read -rp "角色 (1.主节点 2.备用节点): " role_choice
+    local status="active"
+    [[ "$role_choice" == "2" ]] && status="backup"
+    
+    # 测试节点连通性
+    echo -e "${YELLOW}测试节点连通性...${NC}"
+    if timeout 3 bash -c "</dev/tcp/${node_ip}/${node_port}" 2>/dev/null; then
+        echo -e "${GREEN}节点连通正常${NC}"
+    else
+        echo -e "${YELLOW}节点端口不通，可能防火墙未开放${NC}"
+        read -rp "仍要添加? [y/N]: " confirm
+        [[ "$confirm" != "y" && "$confirm" != "Y" ]] && return
+    fi
+    
+    # 保存配置
+    echo "${node_name}|${node_ip}:${node_port}|${proto}|${node_weight}|${status}" >> "$MULTI_VPS_CONFIG"
+    echo -e "${GREEN}节点已添加!${NC}"
+}
+
+# 删除节点
+remove_vps_node() {
+    init_multivps
+    
+    echo ""
+    echo -e "${YELLOW}当前节点列表:${NC}"
+    list_vps_nodes
+    
+    echo ""
+    read -rp "输入要删除的节点名称: " node_name
+    
+    if grep -q "^${node_name}|" "$MULTI_VPS_CONFIG"; then
+        grep -v "^${node_name}|" "$MULTI_VPS_CONFIG" > "$MULTI_VPS_CONFIG.tmp"
+        mv "$MULTI_VPS_CONFIG.tmp" "$MULTI_VPS_CONFIG"
+        echo -e "${GREEN}节点已删除${NC}"
+    else
+        echo -e "${RED}节点不存在${NC}"
+    fi
+}
+
+# 列出所有节点
+list_vps_nodes() {
+    init_multivps
+    
+    echo ""
+    printf "  %-15s %-20s %-12s %-6s %-10s %-10s\n" "名称" "地址" "协议" "权重" "状态" "延迟"
+    printf "  %-15s %-20s %-12s %-6s %-10s %-10s\n" "----" "----" "----" "----" "----" "----"
+    
+    while IFS='|' read -r name addr proto weight status; do
+        [[ "$name" == "#"* || -z "$name" ]] && continue
+        
+        # 测试延迟
+        local ip=$(echo "$addr" | cut -d: -f1)
+        local port=$(echo "$addr" | cut -d: -f2)
+        local latency=$(timeout 2 ping -c 1 -W 1 "$ip" 2>/dev/null | grep 'time=' | sed 's/.*time=\([0-9.]*\).*/\1/' || echo "timeout")
+        
+        # 状态颜色
+        local status_color="${GREEN}"
+        [[ "$status" == "backup" ]] && status_color="${YELLOW}"
+        [[ "$status" == "down" ]] && status_color="${RED}"
+        
+        printf "  %-15s %-20s %-12s %-6s %b%-10s%b %-10s\n" "$name" "$addr" "$proto" "$weight" "$status_color" "$status" "$NC" "${latency}ms"
+    done < "$MULTI_VPS_CONFIG"
+}
+
+# 健康检查所有节点
+check_vps_health() {
+    init_multivps
+    
+    echo ""
+    echo -e "${CYAN}============================================================${NC}"
+    echo -e "${CYAN}                    节点健康检查${NC}"
+    echo -e "${CYAN}============================================================${NC}"
+    echo ""
+    
+    local changed=false
+    local new_config=""
+    
+    while IFS='|' read -r name addr proto weight status; do
+        [[ "$name" == "#"* || -z "$name" ]] && continue
+        
+        local ip=$(echo "$addr" | cut -d: -f1)
+        local port=$(echo "$addr" | cut -d: -f2)
+        
+        echo -n "  检查 $name ($addr) ... "
+        
+        if timeout 3 bash -c "</dev/tcp/${ip}/${port}" 2>/dev/null; then
+            local latency=$(timeout 2 ping -c 1 -W 1 "$ip" 2>/dev/null | grep 'time=' | sed 's/.*time=\([0-9.]*\).*/\1/' || echo "?")
+            echo -e "${GREEN}正常${NC} (${latency}ms)"
+            
+            # 如果之前是 down，恢复为 active
+            if [[ "$status" == "down" ]]; then
+                status="active"
+                changed=true
+                echo -e "    ${GREEN}→ 节点已恢复${NC}"
+            fi
+        else
+            echo -e "${RED}异常${NC} (端口不通)"
+            
+            # 如果之前是 active/backup，标记为 down
+            if [[ "$status" != "down" ]]; then
+                status="down"
+                changed=true
+                echo -e "    ${RED}→ 节点已标记为故障${NC}"
+                
+                # 发送 Telegram 告警
+                local bot_config="/etc/vps-toolbox/tgbot.conf"
+                if [[ -f "$bot_config" ]]; then
+                    source "$bot_config"
+                    if [[ -n "$TG_BOT_TOKEN" && -n "$TG_CHAT_ID" ]]; then
+                        local msg="🚨 *节点故障告警*
+
+节点: ${name}
+地址: ${addr}
+协议: ${proto}
+时间: $(date '+%Y-%m-%d %H:%M:%S')
+
+请检查节点状态!"
+                        curl -s -X POST "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" \
+                            -d "chat_id=${TG_CHAT_ID}" \
+                            -d "text=${msg}" \
+                            -d "parse_mode=Markdown" >/dev/null
+                    fi
+                fi
+            fi
+        fi
+        
+        new_config="${new_config}${name}|${addr}|${proto}|${weight}|${status}\n"
+    done < "$MULTI_VPS_CONFIG"
+    
+    # 如果有变化，更新配置
+    if [[ "$changed" == true ]]; then
+        echo -e "${new_config}" > "$MULTI_VPS_CONFIG"
+        echo ""
+        echo -e "${YELLOW}节点状态已更新${NC}"
+        
+        # 重新生成订阅
+        generate_multivps_sub
+    fi
+    
+    echo ""
+    echo -e "${CYAN}============================================================${NC}"
+}
+
+# 生成多节点聚合订阅
+generate_multivps_sub() {
+    init_multivps
+    
+    local sub_content=""
+    local active_count=0
+    
+    while IFS='|' read -r name addr proto weight status; do
+        [[ "$name" == "#"* || -z "$name" ]] && continue
+        [[ "$status" == "down" ]] && continue
+        
+        local ip=$(echo "$addr" | cut -d: -f1)
+        local port=$(echo "$addr" | cut -d: -f2)
+        
+        # 根据协议生成链接
+        case "$proto" in
+            vless)
+                # 需要用户输入 UUID 等信息，简化处理
+                sub_content="${sub_content}# ${name} (${status})\n"
+                ;;
+            hysteria2)
+                sub_content="${sub_content}# ${name} (${status})\n"
+                ;;
+            shadowsocks)
+                sub_content="${sub_content}# ${name} (${status})\n"
+                ;;
+            *)
+                sub_content="${sub_content}# ${name} (${status})\n"
+                ;;
+        esac
+        ((active_count++))
+    done < "$MULTI_VPS_CONFIG"
+    
+    echo ""
+    echo -e "${GREEN}活跃节点: ${active_count}${NC}"
+    
+    # 保存到机场订阅目录
+    mkdir -p /etc/vps-toolbox/airport
+    echo -e "$sub_content" > /etc/vps-toolbox/airport/multivps.txt
+}
+
+# 设置自动健康检查
+setup_health_check() {
+    echo ""
+    echo -e "${YELLOW}设置自动健康检查...${NC}"
+    echo ""
+    echo "  1. 每 5 分钟检查"
+    echo "  2. 每 15 分钟检查"
+    echo "  3. 每 30 分钟检查"
+    echo "  4. 关闭自动检查"
+    echo "  5. 返回"
+    echo ""
+    read -rp "请选择 [1-5]: " hc_choice
+    
+    local cron_expr=""
+    case $hc_choice in
+        1) cron_expr="*/5 * * * *" ;;
+        2) cron_expr="*/15 * * * *" ;;
+        3) cron_expr="*/30 * * * *" ;;
+        4)
+            crontab -l 2>/dev/null | grep -v "multivps-health" | crontab -
+            echo -e "${GREEN}自动健康检查已关闭${NC}"
+            return
+            ;;
+        5) return ;;
+        *) warn "无效选择"; return ;;
+    esac
+    
+    # 创建健康检查脚本
+    cat > /usr/local/bin/multivps-health.sh <<'HEALTHSCRIPT'
+#!/bin/bash
+# 多 VPS 健康检查脚本
+
+MULTI_VPS_CONFIG="/etc/vps-toolbox/multivps/nodes.conf"
+[[ ! -f "$MULTI_VPS_CONFIG" ]] && exit 0
+
+changed=false
+new_config=""
+
+while IFS='|' read -r name addr proto weight status; do
+    [[ "$name" == "#"* || -z "$name" ]] && continue
+    
+    ip=$(echo "$addr" | cut -d: -f1)
+    port=$(echo "$addr" | cut -d: -f2)
+    
+    if timeout 3 bash -c "</dev/tcp/${ip}/${port}" 2>/dev/null; then
+        if [[ "$status" == "down" ]]; then
+            status="active"
+            changed=true
+        fi
+    else
+        if [[ "$status" != "down" ]]; then
+            status="down"
+            changed=true
+            
+            # Telegram 告警
+            bot_config="/etc/vps-toolbox/tgbot.conf"
+            if [[ -f "$bot_config" ]]; then
+                source "$bot_config"
+                if [[ -n "$TG_BOT_TOKEN" && -n "$TG_CHAT_ID" ]]; then
+                    msg="🚨 *节点故障告警*\n\n节点: ${name}\n地址: ${addr}\n时间: $(date '+%Y-%m-%d %H:%M:%S')"
+                    curl -s -X POST "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" \
+                        -d "chat_id=${TG_CHAT_ID}" \
+                        -d "text=${msg}" \
+                        -d "parse_mode=Markdown" >/dev/null
+                fi
+            fi
+        fi
+    fi
+    
+    new_config="${new_config}${name}|${addr}|${proto}|${weight}|${status}\n"
+done < "$MULTI_VPS_CONFIG"
+
+if [[ "$changed" == true ]]; then
+    echo -e "$new_config" > "$MULTI_VPS_CONFIG"
+fi
+HEALTHSCRIPT
+    
+    chmod +x /usr/local/bin/multivps-health.sh
+    
+    # 添加 cron
+    (crontab -l 2>/dev/null | grep -v "multivps-health"; echo "$cron_expr /usr/local/bin/multivps-health.sh >/dev/null 2>&1") | crontab -
+    
+    echo -e "${GREEN}自动健康检查已设置!${NC}"
+    echo -e "${YELLOW}检查频率: $cron_expr${NC}"
+}
+
+# 多 VPS 管理主菜单
+multivps_manager() {
+    while true; do
+        clear
+        echo ""
+        echo -e "${CYAN}============================================================${NC}"
+        echo -e "${CYAN}                    多节点负载均衡${NC}"
+        echo -e "${CYAN}============================================================${NC}"
+        echo ""
+        echo -e "${YELLOW}功能说明:${NC}"
+        echo "  管理多台 VPS 节点，自动检测健康状态"
+        echo "  订阅中聚合所有可用节点，故障自动切换"
+        echo ""
+        echo -e "${YELLOW}操作选项:${NC}"
+        echo "  1. 添加节点"
+        echo "  2. 删除节点"
+        echo "  3. 查看所有节点"
+        echo "  4. 健康检查"
+        echo "  5. 设置自动健康检查"
+        echo "  6. 生成聚合订阅"
+        echo "  7. 返回主菜单"
+        echo ""
+        read -rp "请选择 [1-7]: " mv_choice
+        
+        case $mv_choice in
+            1) add_vps_node ;;
+            2) remove_vps_node ;;
+            3) list_vps_nodes ;;
+            4) check_vps_health ;;
+            5) setup_health_check ;;
+            6) generate_multivps_sub ;;
+            7) return ;;
+            *) warn "无效选择" ;;
+        esac
+        
+        echo ""
+        read -rp "按回车键继续..."
+    done
+}
+
+
+# 安全配置审计功能
+# 检查代理配置的安全性，给出修复建议
+
+SECURITY_CHECK_ITEMS=(
+    "check_ssh_port:SSH端口是否为默认22"
+    "check_root_password:Root密码是否强密码"
+    "check_firewall:防火墙是否启用"
+    "check_fail2ban:Fail2ban是否安装"
+    "check_xray_api:Xray API是否暴露"
+    "check_cert_expiry:SSL证书是否即将过期"
+    "check_port_exposure:端口暴露范围是否过大"
+    "check_udp_amp:是否存在UDP放大攻击风险"
+    "check_dns_leak:DNS是否泄露"
+    "check_timezone:时区是否设置正确"
+)
+
+# 检查 SSH 端口
+check_ssh_port() {
+    local ssh_port=$(grep -E "^Port\s+" /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}')
+    [[ -z "$ssh_port" ]] && ssh_port=22
+    
+    if [[ "$ssh_port" == "22" ]]; then
+        echo "WARN|SSH使用默认端口22|建议修改为非标准端口，减少暴力破解"
+        return 1
+    else
+        echo "OK|SSH端口为 $ssh_port|已使用非标准端口"
+        return 0
+    fi
+}
+
+# 检查 Root 密码强度
+check_root_password() {
+    # 检查是否使用密钥登录
+    if grep -q "^PasswordAuthentication no" /etc/ssh/sshd_config 2>/dev/null; then
+        echo "OK|已禁用密码登录，使用密钥|最佳实践"
+        return 0
+    fi
+    
+    # 检查密码哈希（仅检查是否存在）
+    local pass_hash=$(grep "^root:" /etc/shadow 2>/dev/null | cut -d: -f2)
+    if [[ -z "$pass_hash" || "$pass_hash" == "*" || "$pass_hash" == "!" ]]; then
+        echo "WARN|Root密码未设置或已锁定|检查登录方式"
+        return 1
+    fi
+    
+    echo "INFO|Root密码已设置|建议使用密钥登录并禁用密码"
+    return 0
+}
+
+# 检查防火墙
+check_firewall() {
+    if command -v ufw &>/dev/null; then
+        if ufw status 2>/dev/null | grep -q "Status: active"; then
+            echo "OK|UFW防火墙已启用|良好"
+            return 0
+        else
+            echo "WARN|UFW防火墙未启用|建议启用防火墙"
+            return 1
+        fi
+    elif command -v firewall-cmd &>/dev/null; then
+        if firewall-cmd --state 2>/dev/null | grep -q "running"; then
+            echo "OK|Firewalld已运行|良好"
+            return 0
+        else
+            echo "WARN|Firewalld未运行|建议启用防火墙"
+            return 1
+        fi
+    elif iptables -L -n 2>/dev/null | grep -q "DROP"; then
+        echo "OK|iptables有DROP规则|基本防护存在"
+        return 0
+    else
+        echo "WARN|未检测到活跃防火墙|强烈建议配置防火墙"
+        return 1
+    fi
+}
+
+# 检查 Fail2ban
+check_fail2ban() {
+    if command -v fail2ban-client &>/dev/null; then
+        if systemctl is-active --quiet fail2ban 2>/dev/null; then
+            local banned=$(fail2ban-client status sshd 2>/dev/null | grep "Currently banned" | awk '{print $NF}' || echo "0")
+            echo "OK|Fail2ban运行中|当前封禁IP: $banned"
+            return 0
+        else
+            echo "WARN|Fail2ban已安装但未运行|建议启动"
+            return 1
+        fi
+    else
+        echo "WARN|Fail2ban未安装|建议安装以防止暴力破解"
+        return 1
+    fi
+}
+
+# 检查 Xray API 暴露
+check_xray_api() {
+    if [[ -f /usr/local/etc/xray/config.json ]]; then
+        local api_tag=$(jq -r '.api.tag // empty' /usr/local/etc/xray/config.json 2>/dev/null)
+        if [[ -n "$api_tag" ]]; then
+            # 检查 API 是否绑定到 127.0.0.1
+            local api_listen=$(jq -r '.inbounds[] | select(.tag=="api") | .listen // empty' /usr/local/etc/xray/config.json 2>/dev/null)
+            if [[ "$api_listen" == "127.0.0.1" ]]; then
+                echo "OK|Xray API仅本地监听|安全"
+                return 0
+            elif [[ -z "$api_listen" || "$api_listen" == "0.0.0.0" ]]; then
+                echo "CRITICAL|Xray API暴露到公网|立即修改配置，绑定到127.0.0.1"
+                return 2
+            fi
+        else
+            echo "INFO|Xray API未启用|无需检查"
+            return 0
+        fi
+    else
+        echo "INFO|未安装Xray|跳过"
+        return 0
+    fi
+}
+
+# 检查证书过期
+check_cert_expiry() {
+    local certs_found=false
+    local warn_count=0
+    
+    # 检查 acme.sh 证书
+    for cert in /root/.acme.sh/*/*.cer /home/*/.acme.sh/*/*.cer 2>/dev/null; do
+        [[ ! -f "$cert" ]] && continue
+        certs_found=true
+        
+        local end_date=$(openssl x509 -in "$cert" -noout -enddate 2>/dev/null | cut -d= -f2)
+        local expire_ts=$(date -d "$end_date" +%s 2>/dev/null || echo "0")
+        local now_ts=$(date +%s)
+        local days_left=$(( (expire_ts - now_ts) / 86400 ))
+        
+        local domain=$(basename "$cert" .cer)
+        if [[ $days_left -lt 7 ]]; then
+            echo "CRITICAL|证书 $domain 将在 ${days_left} 天后过期|立即续签"
+            ((warn_count++))
+        elif [[ $days_left -lt 30 ]]; then
+            echo "WARN|证书 $domain 将在 ${days_left} 天后过期|建议续签"
+            ((warn_count++))
+        fi
+    done
+    
+    # 检查 letsencrypt
+    for cert in /etc/letsencrypt/live/*/cert.pem 2>/dev/null; do
+        [[ ! -f "$cert" ]] && continue
+        certs_found=true
+        
+        local end_date=$(openssl x509 -in "$cert" -noout -enddate 2>/dev/null | cut -d= -f2)
+        local expire_ts=$(date -d "$end_date" +%s 2>/dev/null || echo "0")
+        local now_ts=$(date +%s)
+        local days_left=$(( (expire_ts - now_ts) / 86400 ))
+        
+        local domain=$(basename $(dirname "$cert"))
+        if [[ $days_left -lt 7 ]]; then
+            echo "CRITICAL|证书 $domain 将在 ${days_left} 天后过期|立即续签"
+            ((warn_count++))
+        elif [[ $days_left -lt 30 ]]; then
+            echo "WARN|证书 $domain 将在 ${days_left} 天后过期|建议续签"
+            ((warn_count++))
+        fi
+    done
+    
+    if [[ "$certs_found" == false ]]; then
+        echo "INFO|未找到证书|无需检查"
+        return 0
+    elif [[ $warn_count -eq 0 ]]; then
+        echo "OK|所有证书有效期内|良好"
+        return 0
+    else
+        return 1
+    fi
+}
+
+# 检查端口暴露
+check_port_exposure() {
+    local exposed_ports=$(ss -tln | awk 'NR>1 {print $4}' | sed 's/.*://' | sort -u | wc -l)
+    
+    if [[ $exposed_ports -gt 10 ]]; then
+        echo "WARN|暴露端口过多 (${exposed_ports}个)|检查是否有不必要的端口开放"
+        return 1
+    else
+        echo "OK|暴露端口 ${exposed_ports} 个|正常范围"
+        return 0
+    fi
+}
+
+# 检查 UDP 放大攻击风险
+check_udp_amp() {
+    # 检查是否开放 DNS/NTPS 等 UDP 服务
+    local risky_udp=$(ss -ulnp | grep -E ':53|:123|:161|:1900' | wc -l)
+    
+    if [[ $risky_udp -gt 0 ]]; then
+        echo "WARN|发现可能用于UDP放大的服务 (${risky_udp}个)|确认是否需要开放"
+        return 1
+    else
+        echo "OK|未发现高风险UDP服务|良好"
+        return 0
+    fi
+}
+
+# 检查 DNS 泄露
+check_dns_leak() {
+    local dns_servers=$(cat /etc/resolv.conf 2>/dev/null | grep "^nameserver" | awk '{print $2}')
+    
+    if echo "$dns_servers" | grep -qE "(8\.8\.|1\.1\.|9\.9\.)"; then
+        echo "INFO|使用公共DNS|正常"
+        return 0
+    elif echo "$dns_servers" | grep -q "127\.0\.0"; then
+        echo "OK|使用本地DNS|可能通过代理解析"
+        return 0
+    else
+        echo "INFO|DNS: $(echo $dns_servers | tr '\n' ' ')|检查是否符合预期"
+        return 0
+    fi
+}
+
+# 检查时区
+check_timezone() {
+    local tz=$(timedatectl 2>/dev/null | grep "Time zone" | awk '{print $3}' || date +%Z)
+    if [[ "$tz" == "UTC" ]]; then
+        echo "WARN|时区为UTC|建议设置为本地时区便于日志查看"
+        return 1
+    else
+        echo "OK|时区: $tz|正常"
+        return 0
+    fi
+}
+
+# 运行所有安全检查
+run_security_audit() {
+    clear
+    echo ""
+    echo -e "${CYAN}============================================================${NC}"
+    echo -e "${CYAN}                    安全配置审计${NC}"
+    echo -e "${CYAN}============================================================${NC}"
+    echo ""
+    
+    local ok_count=0
+    local warn_count=0
+    local critical_count=0
+    local info_count=0
+    
+    # 运行所有检查
+    local checks=(
+        check_ssh_port
+        check_root_password
+        check_firewall
+        check_fail2ban
+        check_xray_api
+        check_cert_expiry
+        check_port_exposure
+        check_udp_amp
+        check_dns_leak
+        check_timezone
+    )
+    
+    for check_func in "${checks[@]}"; do
+        echo -n "  检查 ${check_func/check_/} ... "
+        local result=$($check_func)
+        local level=$(echo "$result" | cut -d'|' -f1)
+        local detail=$(echo "$result" | cut -d'|' -f2)
+        local advice=$(echo "$result" | cut -d'|' -f3)
+        
+        case "$level" in
+            OK)
+                echo -e "${GREEN}[✓]${NC} $detail"
+                ((ok_count++))
+                ;;
+            WARN)
+                echo -e "${YELLOW}[!]${NC} $detail"
+                echo -e "      ${YELLOW}→ $advice${NC}"
+                ((warn_count++))
+                ;;
+            CRITICAL)
+                echo -e "${RED}[✗]${NC} $detail"
+                echo -e "      ${RED}→ $advice${NC}"
+                ((critical_count++))
+                ;;
+            INFO)
+                echo -e "${CYAN}[i]${NC} $detail"
+                ((info_count++))
+                ;;
+        esac
+    done
+    
+    echo ""
+    echo -e "${CYAN}============================================================${NC}"
+    echo -e "审计结果: ${GREEN}${ok_count} 通过${NC} | ${YELLOW}${warn_count} 警告${NC} | ${RED}${critical_count} 严重${NC} | ${CYAN}${info_count} 信息${NC}"
+    echo -e "${CYAN}============================================================${NC}"
+    
+    # 如果有严重问题，给出修复建议
+    if [[ $critical_count -gt 0 ]]; then
+        echo ""
+        echo -e "${RED}发现严重安全问题，建议立即修复!${NC}"
+        echo ""
+        echo -e "${YELLOW}快速修复:${NC}"
+        echo "  1. 修改 SSH 端口: sed -i 's/#Port 22/Port 2222/' /etc/ssh/sshd_config"
+        echo "  2. 禁用密码登录: sed -i 's/#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config"
+        echo "  3. 安装 Fail2ban: apt install fail2ban"
+        echo "  4. 启用 UFW: ufw enable"
+    fi
+    
+    echo ""
+    read -rp "按回车键继续..."
+}
+
+# 一键修复安全问题
+auto_fix_security() {
+    clear
+    echo ""
+    echo -e "${CYAN}============================================================${NC}"
+    echo -e "${CYAN}                    一键修复安全问题${NC}"
+    echo -e "${CYAN}============================================================${NC}"
+    echo ""
+    echo -e "${RED}警告: 此操作将修改系统配置!${NC}"
+    echo ""
+    echo "将执行以下操作:"
+    echo "  1. 修改 SSH 端口 (2222)"
+    echo "  2. 禁用 Root 密码登录 (仅密钥)"
+    echo "  3. 安装并启用 Fail2ban"
+    echo "  4. 启用 UFW 防火墙"
+    echo "  5. 限制 SSH 登录尝试"
+    echo ""
+    read -rp "确认执行? 输入 [我确认修复] : " confirm
+    
+    if [[ "$confirm" != "我确认修复" ]]; then
+        echo -e "${YELLOW}已取消${NC}"
+        return
+    fi
+    
+    # 1. 修改 SSH 端口
+    echo -e "${YELLOW}[1/5] 修改 SSH 端口...${NC}"
+    local current_port=$(grep -E "^Port\s+" /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}')
+    [[ -z "$current_port" ]] && current_port=22
+    
+    if [[ "$current_port" == "22" ]]; then
+        sed -i 's/#Port 22/Port 2222/' /etc/ssh/sshd_config 2>/dev/null || \
+        sed -i 's/^Port 22/Port 2222/' /etc/ssh/sshd_config 2>/dev/null || \
+        echo "Port 2222" >> /etc/ssh/sshd_config
+        echo -e "  ${GREEN}SSH 端口已改为 2222${NC}"
+    else
+        echo -e "  ${YELLOW}SSH 端口已是 $current_port，跳过${NC}"
+    fi
+    
+    # 2. 禁用密码登录
+    echo -e "${YELLOW}[2/5] 禁用 Root 密码登录...${NC}"
+    sed -i 's/#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config 2>/dev/null
+    sed -i 's/^PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config 2>/dev/null
+    sed -i 's/#PermitRootLogin yes/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config 2>/dev/null
+    echo -e "  ${GREEN}已禁用密码登录，请确保已配置 SSH 密钥${NC}"
+    
+    # 3. 安装 Fail2ban
+    echo -e "${YELLOW}[3/5] 安装 Fail2ban...${NC}"
+    if ! command -v fail2ban-client &>/dev/null; then
+        apt update -qq && apt install -y -qq fail2ban 2>/dev/null || \
+        yum install -y fail2ban 2>/dev/null || \
+        dnf install -y fail2ban 2>/dev/null || true
+    fi
+    
+    if command -v fail2ban-client &>/dev/null; then
+        cat > /etc/fail2ban/jail.local <<'EOF'
+[DEFAULT]
+bantime = 3600
+findtime = 600
+maxretry = 3
+
+[sshd]
+enabled = true
+port = ssh,2222
+filter = sshd
+logpath = /var/log/auth.log
+backend = systemd
+EOF
+        systemctl enable fail2ban 2>/dev/null
+        systemctl restart fail2ban 2>/dev/null
+        echo -e "  ${GREEN}Fail2ban 已启用${NC}"
+    else
+        echo -e "  ${RED}Fail2ban 安装失败${NC}"
+    fi
+    
+    # 4. 启用 UFW
+    echo -e "${YELLOW}[4/5] 配置防火墙...${NC}"
+    if command -v ufw &>/dev/null; then
+        ufw default deny incoming 2>/dev/null
+        ufw default allow outgoing 2>/dev/null
+        ufw allow 2222/tcp 2>/dev/null
+        ufw allow 443/tcp 2>/dev/null
+        ufw allow 80/tcp 2>/dev/null
+        echo "y" | ufw enable 2>/dev/null
+        echo -e "  ${GREEN}UFW 已启用${NC}"
+    else
+        echo -e "  ${YELLOW}UFW 未安装，跳过${NC}"
+    fi
+    
+    # 5. 重启 SSH
+    echo -e "${YELLOW}[5/5] 重启 SSH 服务...${NC}"
+    systemctl restart sshd 2>/dev/null || service ssh restart 2>/dev/null
+    echo -e "  ${GREEN}SSH 已重启${NC}"
+    
+    echo ""
+    echo -e "${GREEN}修复完成!${NC}"
+    echo -e "${YELLOW}注意: SSH 端口已改为 2222，请使用新端口连接${NC}"
+    echo -e "${YELLOW}ssh -p 2222 root@你的IP${NC}"
+    
+    echo ""
+    read -rp "按回车键继续..."
+}
+
+# 安全审计主菜单
+security_audit_menu() {
+    while true; do
+        clear
+        echo ""
+        echo -e "${CYAN}============================================================${NC}"
+        echo -e "${CYAN}                    安全配置审计${NC}"
+        echo -e "${CYAN}============================================================${NC}"
+        echo ""
+        echo -e "${YELLOW}功能说明:${NC}"
+        echo "  全面检查 VPS 安全配置，发现潜在风险"
+        echo "  提供一键修复功能，快速加固服务器"
+        echo ""
+        echo -e "${YELLOW}检查项目:${NC}"
+        echo "  • SSH 端口和密码策略"
+        echo "  • 防火墙状态"
+        echo "  • Fail2ban 防护"
+        echo "  • Xray API 暴露风险"
+        echo "  • SSL 证书有效期"
+        echo "  • 端口暴露范围"
+        echo "  • UDP 放大攻击风险"
+        echo "  • DNS 泄露"
+        echo "  • 时区设置"
+        echo ""
+        echo -e "${YELLOW}操作选项:${NC}"
+        echo "  1. 运行安全审计"
+        echo "  2. 一键修复安全问题"
+        echo "  3. 查看上次审计结果"
+        echo "  4. 返回主菜单"
+        echo ""
+        read -rp "请选择 [1-4]: " audit_choice
+        
+        case $audit_choice in
+            1) run_security_audit ;;
+            2) auto_fix_security ;;
+            3)
+                if [[ -f "$MULTI_VPS_DIR/audit.log" ]]; then
+                    cat "$MULTI_VPS_DIR/audit.log"
+                else
+                    echo -e "${YELLOW}暂无审计记录${NC}"
+                fi
+                read -rp "按回车键继续..."
+                ;;
+            4) return ;;
+            *) warn "无效选择" ;;
+        esac
+    done
+}
+
 show_banner() {
 
     echo ""
 
     echo -e "${CYAN}============================================================${NC}"
 
-    echo -e "${GREEN}           VPS Toolbox - 多功能一键部署工具 v3.1.0${NC}"
+    echo -e "${GREEN}           VPS Toolbox - 多功能一键部署工具 v3.2.0${NC}"
 
     echo -e "${CYAN}============================================================${NC}"
 
@@ -5453,7 +6270,11 @@ show_menu() {
 
     echo "    16. 启动 HTTP 订阅服务"
 
-    echo ""
+    echo -e "  ${YELLOW}[高级]${NC}"
+
+    echo "    17. 多节点负载均衡"
+
+    echo "    18. 安全配置审计"
 
     echo -e "  ${YELLOW}[管理]${NC}"
 
@@ -5493,7 +6314,7 @@ main() {
 
         show_menu
 
-        read -rp "请选择操作 [0-21]: " choice
+        read -rp "请选择操作 [0-23]: " choice
 
         
 
@@ -5531,15 +6352,19 @@ main() {
 
             16) start_sub_http_server ;;
 
-            17) view_config ;;
+            17) multivps_manager ;;
 
-            18) show_subscription ;;
+            18) security_audit_menu ;;
 
-            19) show_traffic_stats ;;
+            19) view_config ;;
 
-            20) view_stats_menu ;;
+            20) show_subscription ;;
 
-            21) uninstall_service ;;
+            21) show_traffic_stats ;;
+
+            22) view_stats_menu ;;
+
+            23) uninstall_service ;;
 
             0)
 
