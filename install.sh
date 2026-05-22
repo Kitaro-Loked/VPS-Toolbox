@@ -100,7 +100,7 @@ auto_setup_warp() {
     curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | gpg --yes --dearmor --output /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg 2>/dev/null || true
     echo "deb [arch=amd64 signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/cloudflare-client.list >/dev/null
     apt-get update >/dev/null 2>&1 && apt-get install -y cloudflare-warp >/dev/null 2>&1 || true
-    warp-cli register 2>/dev/null || true
+    warp-cli registration new 2>/dev/null || true
     warp-cli connect 2>/dev/null || true
     local wait_count=0
     while [[ $wait_count -lt 30 ]]; do
@@ -754,7 +754,7 @@ setup_warp() {
 
     
 
-    warp-cli register
+    warp-cli registration new
 
     warp-cli connect
 
