@@ -4,13 +4,23 @@
 
 一个功能强大的 Linux 服务器一键部署工具箱，支持 DDNS 域名自动申请与续签、WARP 配置，以及多种代理协议的无脑化安装。
 
-> **致谢**: 本项目在设计和实现上借鉴了 [yeahwu/v2ray-wss](https://github.com/yeahwu/v2ray-wss) 的优秀思路，包括 Nginx 反代 WS + TLS、Reality SNI 伪装、Hysteria2 bing.com 伪装、Shadowsocks-rust 等技术方案。在此基础上进行了扩展和增强，增加了 DDNS 一键申请、WARP 配置、Trojan 支持、订阅链接生成、客户端配置导出等功能。
+> **🍴 本项目是 [yeahwu/v2ray-wss](https://github.com/yeahwu/v2ray-wss) 的分支/扩展版本**
+>
+> 核心协议安装脚本（Vless Reality / Hysteria2 / Shadowsocks-rust / VMess+WS+TLS / HTTPS正向代理）
+> 全部来自 [yeahwu/v2ray-wss](https://github.com/yeahwu/v2ray-wss)，原封不动直接调用。
+>
+> VPS Toolbox 在此基础上增加了以下管理功能：
+> - DDNS 域名一键申请（DuckDNS / Cloudflare / No-IP）
+> - WARP 一键配置
+> - 统一菜单系统（中文/英文）
+> - 订阅链接生成
+> - 服务卸载管理
 
 
 
-[![GitHub stars](https://img.shields.io/github/stars/yourusername/vps-toolbox?style=flat-square)](https://github.com/Kitaro-Loked/VPS-Toolbox)
+[![GitHub stars](https://img.shields.io/github/stars/Kitaro-Loked/VPS-Toolbox?style=flat-square)](https://github.com/Kitaro-Loked/VPS-Toolbox)
 
-[![License](https://img.shields.io/github/license/yourusername/vps-toolbox?style=flat-square)](LICENSE)
+[![License](https://img.shields.io/github/license/Kitaro-Loked/VPS-Toolbox?style=flat-square)](LICENSE)
 
 
 
@@ -63,6 +73,26 @@
 | **Trojan + WebSocket** | 伪装 HTTPS 流量 | ⭐⭐⭐⭐ |
 
 
+
+---
+
+
+
+## 🏗️ 项目架构
+
+```
+┌─────────────────────────────────────────────────────┐
+│                    VPS Toolbox                       │
+│              (菜单外壳 + 管理功能)                    │
+├─────────────────────────────────────────────────────┤
+│  DDNS管理  │  WARP配置  │  订阅生成  │  服务卸载     │
+├─────────────────────────────────────────────────────┤
+│              调用 yeahwu/v2ray-wss 脚本              │
+│   reality.sh │ hy2.sh │ ss-rust.sh │ tcp-wss.sh    │
+└─────────────────────────────────────────────────────┘
+```
+
+**核心理念**: 不重复造轮子，协议安装全部委托给 yeahwu 的原版脚本，VPS Toolbox 专注于提供便捷的管理外壳。
 
 ---
 
@@ -562,7 +592,7 @@ A: 使用 `systemctl status xray` 或对应的服务名称
 
 
 
-[![Star History Chart](https://api.star-history.com/svg?repos=yourusername/vps-toolbox&type=Date)](https://star-history.com/#yourusername/vps-toolbox&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=Kitaro-Loked/VPS-Toolbox&type=Date)](https://star-history.com/#Kitaro-Loked/VPS-Toolbox&Date)
 
 
 
@@ -576,3 +606,31 @@ A: 使用 `systemctl status xray` 或对应的服务名称
 
 </p>
 
+
+
+---
+
+## 💡 未来可能添加的功能
+
+> 以下功能正在评估或规划中，欢迎提 Issue 建议：
+
+### 高优先级
+- [ ] **多用户管理** - 为同一协议添加多个 UUID/密码
+- [ ] **流量统计** - 基于 v2ray/xray API 的实时流量监控
+- [ ] **自动更新** - 检测 yeahwu 脚本更新并提示
+- [ ] **端口管理** - 统一查看/修改所有协议端口
+- [ ] **防火墙管理** - 一键开放/关闭端口 (iptables/nftables/ufw)
+
+### 中优先级
+- [ ] **证书管理** - 查看/续签/更换 SSL 证书
+- [ ] **日志查看** - 实时查看各协议日志
+- [ ] **备份恢复** - 导出/导入所有配置
+- [ ] **BBR/网络优化** - 一键开启 BBR、锐速等加速
+- [ ] **Docker 部署** - 提供 Docker Compose 版本
+
+### 低优先级 / 脑洞
+- [ ] **Telegram Bot** - 通过 Bot 远程管理节点
+- [ ] **Web 面板** - 浏览器图形化管理界面
+- [ ] **多服务器管理** - 批量管理多台 VPS
+- [ ] **节点测速** - 集成 speedtest / iperf3
+- [ ] **自动切换** - 节点故障自动切换备用
