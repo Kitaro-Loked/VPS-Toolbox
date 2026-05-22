@@ -14,7 +14,7 @@ sed -i 's/\r$//' "$0" 2>/dev/null || true
 
 # 仓库: https://github.com/Kitaro-Loked/VPS-Toolbox
 
-# 版本: 3.3.0
+# 版本: 3.4.0
 
 # 致谢: 协议安装脚本全部来自 yeahwu/v2ray-wss
 
@@ -78,6 +78,60 @@ check_root() {
 
     fi
 
+}
+
+# IPv6-only 环境检测与自动处理
+
+IS_IPV6_ONLY=false
+
+# 检测是否为 IPv6-only 环境
+check_ipv6_only() {
+    local has_v4=$(ip -4 addr show 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '127\.0\.0\.1' | head -n1)
+    local has_v6=$(ip -6 addr show 2>/dev/null | grep -oP '(?<=inet6\s)[\da-fA-F:]+' | grep -v '^::1$' | grep -v '^fe80' | head -n1)
+    if [[ -z "$has_v4" && -n "$has_v6" ]]; then
+        return 0
+    fi
+    return 1
+}
+
+# 自动安装 WARP (非交互式，用于 IPv6-only 环境)
+auto_setup_warp() {
+    log "检测到 IPv6-only 环境，正在自动安装 WARP 提供 IPv4 出口..."
+    curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | gpg --yes --dearmor --output /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg 2>/dev/null || true
+    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/cloudflare-client.list >/dev/null
+    apt-get update >/dev/null 2>&1 && apt-get install -y cloudflare-warp >/dev/null 2>&1 || true
+    warp-cli register 2>/dev/null || true
+    warp-cli connect 2>/dev/null || true
+    local wait_count=0
+    while [[ $wait_count -lt 30 ]]; do
+        if curl -s -4 --max-time 5 https://api.ipify.org >/dev/null 2>&1; then
+            log "WARP 连接成功! IPv4 出口已可用"
+            return 0
+        fi
+        sleep 2
+        ((wait_count++))
+    done
+    warn "WARP 连接可能未完全就绪，但将继续执行..."
+    return 1
+}
+
+# IPv6-only 环境初始化
+init_ipv6_environment() {
+    if check_ipv6_only; then
+        IS_IPV6_ONLY=true
+        echo -e "${YELLOW}========================================${NC}"
+        echo -e "${YELLOW}  检测到 IPv6-only 环境${NC}"
+        echo -e "${YELLOW}========================================${NC}"
+        echo ""
+        if command -v warp-cli &>/dev/null && warp-cli status 2>/dev/null | grep -q "Connected"; then
+            log "WARP 已运行，IPv4 出口可用"
+        else
+            auto_setup_warp
+        fi
+        echo ""
+        echo -e "${GREEN}IPv6-only 环境初始化完成${NC}"
+        echo ""
+    fi
 }
 
 # 检查系统类型
@@ -178,12 +232,18 @@ install_dependencies() {
 
 get_server_ip() {
 
-    local IP=$(curl -s -4 --max-time 10 http://www.cloudflare.com/cdn-cgi/trace | grep "^ip=" | awk -F= '{print $2}')
+    local IP=""
+
+    # 优先尝试 IPv4 (WARP 提供)
+    IP=$(curl -s -4 --max-time 10 http://www.cloudflare.com/cdn-cgi/trace 2>/dev/null | grep "^ip=" | awk -F= '{print $2}')
 
     if [[ -z "$IP" ]]; then
+        IP=$(curl -s -4 --max-time 10 https://api.ipify.org 2>/dev/null)
+    fi
 
-        IP=$(curl -s -4 --max-time 10 https://api.ipify.org)
-
+    # 如果 IPv4 不可用，尝试 IPv6
+    if [[ -z "$IP" ]]; then
+        IP=$(curl -s -6 --max-time 10 https://api64.ipify.org 2>/dev/null)
     fi
 
     echo "$IP"
@@ -730,7 +790,7 @@ install_vless() {
 
     cd /tmp
 
-    wget -q https://raw.githubusercontent.com/yeahwu/v2ray-wss/main/reality.sh
+    wget -q https://raw.githubusercontent.com/yeahwu/v2ray-wss/main/reality.sh 2>/dev/null ||     curl -sL https://raw.githubusercontent.com/yeahwu/v2ray-wss/main/reality.sh -o reality.sh
 
     bash reality.sh
 
@@ -762,7 +822,7 @@ install_hysteria2() {
 
     cd /tmp
 
-    wget -q https://raw.githubusercontent.com/yeahwu/v2ray-wss/main/hy2.sh
+    wget -q https://raw.githubusercontent.com/yeahwu/v2ray-wss/main/hy2.sh 2>/dev/null ||     curl -sL https://raw.githubusercontent.com/yeahwu/v2ray-wss/main/hy2.sh -o hy2.sh
 
     bash hy2.sh
 
@@ -794,7 +854,7 @@ install_shadowsocks() {
 
     cd /tmp
 
-    wget -q https://raw.githubusercontent.com/yeahwu/v2ray-wss/main/ss-rust.sh
+    wget -q https://raw.githubusercontent.com/yeahwu/v2ray-wss/main/ss-rust.sh 2>/dev/null ||     curl -sL https://raw.githubusercontent.com/yeahwu/v2ray-wss/main/ss-rust.sh -o ss-rust.sh
 
     bash ss-rust.sh
 
@@ -826,7 +886,7 @@ install_vmess() {
 
     cd /tmp
 
-    wget -q https://raw.githubusercontent.com/yeahwu/v2ray-wss/main/tcp-wss.sh
+    wget -q https://raw.githubusercontent.com/yeahwu/v2ray-wss/main/tcp-wss.sh 2>/dev/null ||     curl -sL https://raw.githubusercontent.com/yeahwu/v2ray-wss/main/tcp-wss.sh -o tcp-wss.sh
 
     bash tcp-wss.sh
 
@@ -858,7 +918,7 @@ install_https_proxy() {
 
     cd /tmp
 
-    wget -q https://raw.githubusercontent.com/yeahwu/v2ray-wss/main/https.sh
+    wget -q https://raw.githubusercontent.com/yeahwu/v2ray-wss/main/https.sh 2>/dev/null ||     curl -sL https://raw.githubusercontent.com/yeahwu/v2ray-wss/main/https.sh -o https.sh
 
     bash https.sh
 
@@ -7412,9 +7472,13 @@ show_banner() {
 
     echo -e "${CYAN}============================================================${NC}"
 
-    echo -e "${GREEN}           VPS Toolbox - 多功能一键部署工具 v3.3.0${NC}"
+    echo -e "${GREEN}           VPS Toolbox - 多功能一键部署工具 v3.4.0${NC}"
 
     echo -e "${CYAN}============================================================${NC}"
+
+    if [[ "$IS_IPV6_ONLY" == "true" ]]; then
+        echo -e "  ${YELLOW}网络模式${NC}: ${CYAN}IPv6-only (WARP)${NC}"
+    fi
 
     show_usage_stats
 
@@ -7525,6 +7589,8 @@ main() {
     check_root
 
     check_system
+
+    init_ipv6_environment
 
     record_usage
 
