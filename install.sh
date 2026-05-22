@@ -96,676 +96,101 @@ check_ipv6_only() {
 
 # 自动安装 WARP (非交互式，用于 IPv6-only 环境)
 auto_setup_warp() {
-    log "检测到 IPv6-only 环境，正在自动安装 WARP 提供 IPv4 出口..."
+    clear
+    echo ""
+    echo -e "${CYAN}============================================================${NC}"
+    echo -e "${CYAN}                    WARP 网络配置${NC}"
+    echo -e "${CYAN}============================================================${NC}"
+    echo ""
+    echo -e "${YELLOW}请选择 WARP 安装方式:${NC}"
+    echo ""
+    echo "  1. 官方 Cloudflare WARP (推荐，功能最全)"
+    echo "     - 支持全局代理 / 分流模式"
+    echo "     - 需要 TUN 模块支持"
+    echo "     - 体积较大 (~200MB)"
+    echo ""
+    echo "  2. fscarmen WARP 脚本 (轻量，LXC兼容)"
+    echo "     - 支持 WireGuard / WireProxy 模式"
+    echo "     - 支持 IPv4/IPv6 双栈"
+    echo "     - 自动适配内核版本"
+    echo "     - LXC / OpenVZ 容器可用"
+    echo ""
+    echo "  3. 返回主菜单"
+    echo ""
+    read -rp "请选择 [1-3]: " warp_choice
+    
+    case $warp_choice in
+        1) setup_warp_official ;;
+        2) setup_warp_fscarmen ;;
+        3) return ;;
+        *) warn "无效选择" ;;
+    esac
+}
+
+# 官方 Cloudflare WARP
+setup_warp_official() {
+    clear
+    echo ""
+    echo -e "${CYAN}============================================================${NC}"
+    echo -e "${CYAN}              官方 Cloudflare WARP 安装${NC}"
+    echo -e "${CYAN}============================================================${NC}"
+    echo ""
+    
+    log "正在安装官方 Cloudflare WARP..."
+    
     curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | gpg --yes --dearmor --output /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg 2>/dev/null || true
     echo "deb [arch=amd64 signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/cloudflare-client.list >/dev/null
     apt-get update >/dev/null 2>&1 && apt-get install -y cloudflare-warp >/dev/null 2>&1 || true
+    
     warp-cli registration new 2>/dev/null || true
     warp-cli connect 2>/dev/null || true
-    local wait_count=0
-    while [[ $wait_count -lt 30 ]]; do
-        if curl -s -4 --max-time 5 https://api.ipify.org >/dev/null 2>&1; then
-            log "WARP 连接成功! IPv4 出口已可用"
-            return 0
-        fi
-        sleep 2
-        ((wait_count++))
-    done
-    warn "WARP 连接可能未完全就绪，但将继续执行..."
-    return 1
+    
+    log "官方 WARP 安装完成"
+    echo ""
+    echo -e "${YELLOW}常用命令:${NC}"
+    echo "  warp-cli status     - 查看状态"
+    echo "  warp-cli connect    - 连接"
+    echo "  warp-cli disconnect - 断开"
+    echo ""
+    read -rp "按回车键继续..."
 }
 
-# IPv6-only 环境初始化
-init_ipv6_environment() {
-    if check_ipv6_only; then
-        IS_IPV6_ONLY=true
-        echo -e "${YELLOW}========================================${NC}"
-        echo -e "${YELLOW}  检测到 IPv6-only 环境${NC}"
-        echo -e "${YELLOW}========================================${NC}"
+# fscarmen WARP 脚本 (轻量，LXC兼容)
+setup_warp_fscarmen() {
+    clear
+    echo ""
+    echo -e "${CYAN}============================================================${NC}"
+    echo -e "${CYAN}            fscarmen WARP 脚本 (轻量版)${NC}"
+    echo -e "${CYAN}============================================================${NC}"
+    echo ""
+    echo -e "${YELLOW}即将运行 fscarmen 的 WARP 脚本...${NC}"
+    echo ""
+    echo -e "${GREEN}该脚本特点:${NC}"
+    echo "  - 支持 LXC / OpenVZ 容器"
+    echo "  - 自动检测内核版本，适配 wireguard / wireguard-go"
+    echo "  - 支持 WARP+ / Teams 账户"
+    echo "  - 支持 Netflix 解锁检测"
+    echo ""
+    echo -e "${YELLOW}安装后可用 warp 命令管理:${NC}"
+    echo "  warp n   - 获取 WARP IP"
+    echo "  warp o   - 临时关闭 WARP"
+    echo "  warp u   - 卸载 WARP"
+    echo "  warp 4   - 添加 IPv4 WARP"
+    echo "  warp 6   - 添加 IPv6 WARP"
+    echo "  warp d   - 添加双栈 WARP"
+    echo "  warp c   - Socks5 代理模式"
+    echo "  warp w   - WireProxy 模式"
+    echo ""
+    read -rp "确认安装? [Y/n]: " confirm
+    
+    if [[ "$confirm" != "n" && "$confirm" != "N" ]]; then
+        log "正在下载并运行 fscarmen WARP 脚本..."
         echo ""
-        if command -v warp-cli &>/dev/null && warp-cli status 2>/dev/null | grep -q "Connected"; then
-            log "WARP 已运行，IPv4 出口可用"
-        else
-            auto_setup_warp
-        fi
-        echo ""
-        echo -e "${GREEN}IPv6-only 环境初始化完成${NC}"
-        echo ""
+        bash <(curl -fsSL https://gitlab.com/fscarmen/warp/-/raw/main/menu.sh)
     fi
-}
-
-# 检查系统类型
-
-check_system() {
-
-    if [[ -f /etc/os-release ]]; then
-
-        . /etc/os-release
-
-        OS=$NAME
-
-        VER=$VERSION_ID
-
-    else
-
-        error "无法检测操作系统类型"
-
-    fi
-
     
-
-    case $OS in
-
-        "Ubuntu"|"Debian GNU/Linux")
-
-            PKG_MANAGER="apt"
-
-            ;;
-
-        "CentOS Linux"|"CentOS Stream"|"AlmaLinux"|"Rocky Linux")
-
-            PKG_MANAGER="yum"
-
-            ;;
-
-        "Fedora")
-
-            PKG_MANAGER="dnf"
-
-            ;;
-
-        *)
-
-            error "不支持的操作系统: $OS"
-
-            ;;
-
-    esac
-
-    
-
-    log "检测到系统: $OS $VER"
-
-}
-
-# 安装依赖
-
-install_dependencies() {
-
-    log "正在安装基础依赖..."
-
-    
-
-    if [[ "$PKG_MANAGER" == "apt" ]]; then
-
-        apt-get update -y >/dev/null 2>&1
-
-        apt-get install -y curl wget git socat jq cron openssl qrencode net-tools unzip nginx cronie >/dev/null 2>&1 || \
-
-        apt-get install -y curl wget git socat jq cron openssl qrencode net-tools unzip nginx >/dev/null 2>&1
-
-    else
-
-        $PKG_MANAGER install -y curl wget git socat jq cronie openssl qrencode net-tools unzip nginx >/dev/null 2>&1 || \
-
-        $PKG_MANAGER install -y curl wget git socat jq openssl qrencode net-tools unzip nginx >/dev/null 2>&1
-
-    fi
-
-    
-
-    systemctl enable cron >/dev/null 2>&1 || systemctl enable crond >/dev/null 2>&1 || true
-
-    systemctl start cron >/dev/null 2>&1 || systemctl start crond >/dev/null 2>&1 || true
-
-    
-
-    mkdir -p "$CONFIG_DIR"
-
-    
-
-    log "基础依赖安装完成"
-
-}
-
-# 获取服务器IP
-
-get_server_ip() {
-
-    local IP=""
-
-    # 优先尝试 IPv4 (WARP 提供)
-    IP=$(curl -s -4 --max-time 10 http://www.cloudflare.com/cdn-cgi/trace 2>/dev/null | grep "^ip=" | awk -F= '{print $2}')
-
-    if [[ -z "$IP" ]]; then
-        IP=$(curl -s -4 --max-time 10 https://api.ipify.org 2>/dev/null)
-    fi
-
-    # 如果 IPv4 不可用，尝试 IPv6
-    if [[ -z "$IP" ]]; then
-        IP=$(curl -s -6 --max-time 10 https://api64.ipify.org 2>/dev/null)
-    fi
-
-    echo "$IP"
-
-}
-
-# ==================== DDNS 功能 ====================
-
-setup_ddns() {
-
-    clear
-
     echo ""
-
-    echo -e "${CYAN}============================================================${NC}"
-
-    echo -e "${CYAN}                   DDNS 域名申请与管理${NC}"
-
-    echo -e "${CYAN}============================================================${NC}"
-
-    echo ""
-
-    
-
-    echo -e "${YELLOW}请选择 DDNS 提供商:${NC}"
-
-    echo "  1. DuckDNS (推荐，免费，一键申请)"
-
-    echo "  2. Cloudflare (需要 API Token)"
-
-    echo "  3. No-IP (需要账号密码)"
-
-    echo "  4. 查看当前 DDNS 状态"
-
-    echo "  5. 返回主菜单"
-
-    echo ""
-
-    read -rp "请选择 [1-5]: " ddns_choice
-
-    
-
-    case $ddns_choice in
-
-        1) setup_duckdns_auto ;;
-
-        2) setup_cloudflare ;;
-
-        3) setup_noip ;;
-
-        4) view_ddns_status ;;
-
-        5) return ;;
-
-        *) warn "无效选择" ;;
-
-    esac
-
-}
-
-setup_duckdns_auto() {
-
-    clear
-
-    echo ""
-
-    echo -e "${CYAN}============================================================${NC}"
-
-    echo -e "${CYAN}                    DuckDNS 一键申请${NC}"
-
-    echo -e "${CYAN}============================================================${NC}"
-
-    echo ""
-
-    
-
-    log "正在生成随机子域名..."
-
-    local RANDOM_SUB=$(tr -dc 'a-z0-9' </dev/urandom | head -c 8)
-
-    local DUCK_DOMAIN="$RANDOM_SUB"
-
-    local DDNS_DOMAIN="${RANDOM_SUB}.duckdns.org"
-
-    local PUBLIC_IP=$(get_server_ip)
-
-    
-
-    echo -e "${GREEN}已生成随机子域名:${NC} $DUCK_DOMAIN"
-
-    echo -e "${CYAN}完整域名:${NC} $DDNS_DOMAIN"
-
-    echo -e "${CYAN}公网IP:${NC} $PUBLIC_IP"
-
-    echo ""
-
-    
-
-    echo -e "${YELLOW}DuckDNS 需要 Token 才能更新域名。${NC}"
-
-    echo "  1. 我已经有 DuckDNS Token (直接输入)"
-
-    echo "  2. 帮我打开 DuckDNS 注册页面 (获取 Token)"
-
-    echo "  3. 返回上一级"
-
-    echo ""
-
-    read -rp "请选择 [1-3]: " duck_choice
-
-    
-
-    case $duck_choice in
-
-        1)
-
-            duck_token=""
-
-            while [[ -z "$duck_token" ]]; do
-
-                read -rp "请输入 DuckDNS Token: " duck_token
-
-                duck_token=$(echo "$duck_token" | xargs)
-
-                if [[ -z "$duck_token" ]]; then
-
-                    warn "Token 不能为空，请重新输入"
-
-                fi
-
-            done
-
-            
-
-            local RESULT=$(curl -s "https://www.duckdns.org/update?domains=$DUCK_DOMAIN&token=$duck_token&ip=$PUBLIC_IP")
-
-            
-
-            if [[ "$RESULT" == "OK" ]]; then
-
-                log "DuckDNS 域名更新成功!"
-
-            else
-
-                warn "域名更新返回: $RESULT"
-
-                warn "如果域名不存在，DuckDNS 会自动创建"
-
-            fi
-
-            
-
-            log "等待 DNS 传播，最多60秒..."
-
-            local DNS_READY=0
-
-            for i in {1..12}; do
-
-                sleep 5
-
-                if host "$DDNS_DOMAIN" >/dev/null 2>&1 || nslookup "$DDNS_DOMAIN" >/dev/null 2>&1; then
-
-                    DNS_READY=1
-
-                    log "DNS 已生效!"
-
-                    break
-
-                fi
-
-                echo -n "."
-
-            done
-
-            echo ""
-
-            
-
-            cat > "$CONFIG_DIR/ddns.conf" <<EOF
-
-DDNS_PROVIDER=duckdns
-
-DUCK_TOKEN=$duck_token
-
-DUCK_DOMAIN=$DUCK_DOMAIN
-
-DDNS_DOMAIN=$DDNS_DOMAIN
-
-EOF
-
-            
-
-            cat > "$CONFIG_DIR/update-ddns.sh" <<'EOF'
-
-#!/bin/bash
-
-CONFIG_DIR="/etc/vps-toolbox"
-
-source "$CONFIG_DIR/ddns.conf"
-
-PUBLIC_IP=$(curl -s -4 https://api.ipify.org)
-
-curl -s "https://www.duckdns.org/update?domains=$DUCK_DOMAIN&token=$DUCK_TOKEN&ip=$PUBLIC_IP" >/dev/null
-
-echo "[$(date)] DDNS updated: $DDNS_DOMAIN -> $PUBLIC_IP" >> /var/log/ddns.log
-
-EOF
-
-            chmod +x "$CONFIG_DIR/update-ddns.sh"
-
-            (crontab -l 2>/dev/null | grep -v "update-ddns"; echo "*/5 * * * * $CONFIG_DIR/update-ddns.sh >/dev/null 2>&1") | crontab -
-
-            
-
-            log "配置已保存! DDNS 更新脚本已配置 (每5分钟检测)"
-
-            ;;
-
-        2)
-
-            echo ""
-
-            echo -e "${YELLOW}请在浏览器中打开: https://www.duckdns.org${NC}"
-
-            echo "  1. 用 Google/GitHub/Amazon/Twitter 登录"
-
-            echo "  2. 创建子域名"
-
-            echo "  3. 复制 Token"
-
-            echo "  4. 返回选 '1. 输入已有 Token'"
-
-            echo ""
-
-            read -rp "按回车键返回..."
-
-            setup_duckdns_auto
-
-            return
-
-            ;;
-
-        3) return ;;
-
-        *) warn "无效选择" ;;
-
-    esac
-
-    
-
-    echo ""
-
     read -rp "按回车键继续..."
-
-}
-
-setup_cloudflare() {
-
-    clear
-
-    echo ""
-
-    echo -e "${CYAN}============================================================${NC}"
-
-    echo -e "${CYAN}                    Cloudflare DDNS${NC}"
-
-    echo -e "${CYAN}============================================================${NC}"
-
-    echo ""
-
-    
-
-    read -rp "请输入 Cloudflare API Token: " cf_token
-
-    read -rp "请输入域名 (例如: example.com): " cf_domain
-
-    read -rp "请输入子域名前缀 (例如: vps): " cf_subdomain
-
-    
-
-    local DDNS_DOMAIN="${cf_subdomain}.${cf_domain}"
-
-    local PUBLIC_IP=$(get_server_ip)
-
-    local ZONE_ID=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones?name=$cf_domain" \
-
-        -H "Authorization: Bearer $cf_token" -H "Content-Type: application/json" | jq -r '.result[0].id')
-
-    
-
-    if [[ "$ZONE_ID" == "null" || -z "$ZONE_ID" ]]; then
-
-        error "获取 Zone ID 失败"
-
-    fi
-
-    
-
-    curl -s -X POST "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records" \
-
-        -H "Authorization: Bearer $cf_token" -H "Content-Type: application/json" \
-
-        --data "{\"type\":\"A\",\"name\":\"$cf_subdomain\",\"content\":\"$PUBLIC_IP\",\"ttl\":120,\"proxied\":false}" >/dev/null
-
-    
-
-    cat > "$CONFIG_DIR/ddns.conf" <<EOF
-
-DDNS_PROVIDER=cloudflare
-
-CF_TOKEN=$cf_token
-
-CF_DOMAIN=$cf_domain
-
-CF_SUBDOMAIN=$cf_subdomain
-
-DDNS_DOMAIN=$DDNS_DOMAIN
-
-ZONE_ID=$ZONE_ID
-
-EOF
-
-    
-
-    cat > "$CONFIG_DIR/update-ddns.sh" <<'EOF'
-
-#!/bin/bash
-
-CONFIG_DIR="/etc/vps-toolbox"
-
-source "$CONFIG_DIR/ddns.conf"
-
-PUBLIC_IP=$(curl -s -4 https://api.ipify.org)
-
-RECORD_ID=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records?name=$DDNS_DOMAIN" -H "Authorization: Bearer $CF_TOKEN" | jq -r '.result[0].id')
-
-curl -s -X PUT "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records/$RECORD_ID" -H "Authorization: Bearer $CF_TOKEN" -H "Content-Type: application/json" --data "{\"type\":\"A\",\"name\":\"$DDNS_DOMAIN\",\"content\":\"$PUBLIC_IP\",\"ttl\":120}" >/dev/null
-
-echo "[$(date)] DDNS updated: $DDNS_DOMAIN -> $PUBLIC_IP" >> /var/log/ddns.log
-
-EOF
-
-    chmod +x "$CONFIG_DIR/update-ddns.sh"
-
-    (crontab -l 2>/dev/null | grep -v "update-ddns"; echo "*/5 * * * * $CONFIG_DIR/update-ddns.sh >/dev/null 2>&1") | crontab -
-
-    
-
-    log "Cloudflare DDNS 配置完成! 域名: $DDNS_DOMAIN"
-
-    echo ""
-
-    read -rp "按回车键继续..."
-
-}
-
-setup_noip() {
-
-    clear
-
-    echo ""
-
-    echo -e "${CYAN}============================================================${NC}"
-
-    echo -e "${CYAN}                      No-IP DDNS${NC}"
-
-    echo -e "${CYAN}============================================================${NC}"
-
-    echo ""
-
-    
-
-    read -rp "请输入 No-IP 用户名: " noip_user
-
-    read -rsp "请输入 No-IP 密码: " noip_pass
-
-    echo ""
-
-    read -rp "请输入主机名 (例如: yourname.ddns.net): " noip_host
-
-    
-
-    local DDNS_DOMAIN="$noip_host"
-
-    local PUBLIC_IP=$(get_server_ip)
-
-    
-
-    curl -s -u "$noip_user:$noip_pass" "https://dynupdate.no-ip.com/nic/update?hostname=$noip_host&myip=$PUBLIC_IP" >/dev/null
-
-    
-
-    cat > "$CONFIG_DIR/ddns.conf" <<EOF
-
-DDNS_PROVIDER=noip
-
-NOIP_USER=$noip_user
-
-NOIP_PASS=$noip_pass
-
-NOIP_HOST=$noip_host
-
-DDNS_DOMAIN=$DDNS_DOMAIN
-
-EOF
-
-    
-
-    cat > "$CONFIG_DIR/update-ddns.sh" <<'EOF'
-
-#!/bin/bash
-
-CONFIG_DIR="/etc/vps-toolbox"
-
-source "$CONFIG_DIR/ddns.conf"
-
-PUBLIC_IP=$(curl -s -4 https://api.ipify.org)
-
-curl -s -u "$NOIP_USER:$NOIP_PASS" "https://dynupdate.no-ip.com/nic/update?hostname=$NOIP_HOST&myip=$PUBLIC_IP" >/dev/null
-
-echo "[$(date)] DDNS updated: $DDNS_DOMAIN -> $PUBLIC_IP" >> /var/log/ddns.log
-
-EOF
-
-    chmod +x "$CONFIG_DIR/update-ddns.sh"
-
-    (crontab -l 2>/dev/null | grep -v "update-ddns"; echo "*/5 * * * * $CONFIG_DIR/update-ddns.sh >/dev/null 2>&1") | crontab -
-
-    
-
-    log "No-IP 配置完成! 域名: $DDNS_DOMAIN"
-
-    echo ""
-
-    read -rp "按回车键继续..."
-
-}
-
-view_ddns_status() {
-
-    clear
-
-    echo ""
-
-    echo -e "${CYAN}============================================================${NC}"
-
-    echo -e "${CYAN}                      DDNS 状态${NC}"
-
-    echo -e "${CYAN}============================================================${NC}"
-
-    echo ""
-
-    
-
-    if [[ -f "$CONFIG_DIR/ddns.conf" ]]; then
-
-        cat "$CONFIG_DIR/ddns.conf"
-
-        echo ""
-
-        echo -e "${CYAN}当前公网IP:${NC} $(get_server_ip)"
-
-        echo -e "${CYAN}DDNS日志:${NC}"
-
-        tail -n 5 /var/log/ddns.log 2>/dev/null || echo "暂无日志"
-
-    else
-
-        warn "尚未配置 DDNS"
-
-    fi
-
-    
-
-    echo ""
-
-    read -rp "按回车键继续..."
-
-}
-
-# ==================== WARP 功能 ====================
-
-setup_warp() {
-
-    clear
-
-    echo ""
-
-    echo -e "${CYAN}============================================================${NC}"
-
-    echo -e "${CYAN}                      WARP 一键配置${NC}"
-
-    echo -e "${CYAN}============================================================${NC}"
-
-    echo ""
-
-    
-
-    log "正在安装 WARP..."
-
-    
-
-    curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | gpg --yes --dearmor --output /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
-
-    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/cloudflare-client.list
-
-    apt-get update && apt-get install -y cloudflare-warp
-
-    
-
-    warp-cli registration new
-
-    warp-cli connect
-
-    
-
-    log "WARP 安装完成"
-
-    echo ""
-
-    read -rp "按回车键继续..."
-
 }
 
 # ==================== 协议安装 - 直接调用 yeahwu 的脚本 ====================
