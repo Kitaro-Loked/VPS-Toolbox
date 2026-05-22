@@ -14,7 +14,7 @@ sed -i 's/\r$//' "$0" 2>/dev/null || true
 
 # 仓库: https://github.com/Kitaro-Loked/VPS-Toolbox
 
-# 版本: 3.0.0
+# 版本: 3.1.0
 
 # 致谢: 协议安装脚本全部来自 yeahwu/v2ray-wss
 
@@ -5254,15 +5254,134 @@ test_subscription() {
 
 }
 
+# 使用统计功能
+# 记录脚本总使用次数和当日使用次数
+
+STATS_DIR="/etc/vps-toolbox/stats"
+STATS_FILE="$STATS_DIR/usage.stats"
+
+# 初始化统计目录
+init_stats() {
+    mkdir -p "$STATS_DIR"
+    if [[ ! -f "$STATS_FILE" ]]; then
+        echo "total:0" > "$STATS_FILE"
+        echo "today:0" >> "$STATS_FILE"
+        echo "last_date:$(date +%Y%m%d)" >> "$STATS_FILE"
+        echo "daily_record:" >> "$STATS_FILE"
+    fi
+}
+
+# 记录一次使用
+record_usage() {
+    init_stats
+    
+    local today=$(date +%Y%m%d)
+    local total=$(grep "^total:" "$STATS_FILE" | cut -d: -f2)
+    local today_count=$(grep "^today:" "$STATS_FILE" | cut -d: -f2)
+    local last_date=$(grep "^last_date:" "$STATS_FILE" | cut -d: -f2)
+    local daily_record=$(grep "^daily_record:" "$STATS_FILE" | cut -d: -f2-)
+    
+    # 检查是否跨天
+    if [[ "$today" != "$last_date" ]]; then
+        # 保存昨天的记录
+        if [[ -n "$daily_record" ]]; then
+            daily_record="${daily_record};${last_date}:${today_count}"
+        else
+            daily_record="${last_date}:${today_count}"
+        fi
+        # 重置今日计数
+        today_count=0
+        last_date="$today"
+    fi
+    
+    # 增加计数
+    total=$((total + 1))
+    today_count=$((today_count + 1))
+    
+    # 写回文件
+    cat > "$STATS_FILE" <<EOF
+total:${total}
+today:${today_count}
+last_date:${today}
+daily_record:${daily_record}
+EOF
+}
+
+# 获取统计数据
+get_stats() {
+    init_stats
+    
+    local total=$(grep "^total:" "$STATS_FILE" | cut -d: -f2)
+    local today_count=$(grep "^today:" "$STATS_FILE" | cut -d: -f2)
+    local last_date=$(grep "^last_date:" "$STATS_FILE" | cut -d: -f2)
+    local daily_record=$(grep "^daily_record:" "$STATS_FILE" | cut -d: -f2-)
+    
+    # 检查是否跨天（可能脚本一直没运行，但日期变了）
+    local today=$(date +%Y%m%d)
+    if [[ "$today" != "$last_date" ]]; then
+        today_count=0
+    fi
+    
+    echo "${total}|${today_count}|${daily_record}"
+}
+
+# 显示统计信息（在 banner 中调用）
+show_usage_stats() {
+    local stats=$(get_stats)
+    local total=$(echo "$stats" | cut -d'|' -f1)
+    local today=$(echo "$stats" | cut -d'|' -f2)
+    
+    echo -e "  ${YELLOW}使用统计${NC}: 总次数 ${GREEN}${total}${NC} | 今日 ${GREEN}${today}${NC}"
+}
+
+# 查看详细统计菜单
+view_stats_menu() {
+    clear
+    echo ""
+    echo -e "${CYAN}============================================================${NC}"
+    echo -e "${CYAN}                    使用统计详情${NC}"
+    echo -e "${CYAN}============================================================${NC}"
+    echo ""
+    
+    local stats=$(get_stats)
+    local total=$(echo "$stats" | cut -d'|' -f1)
+    local today=$(echo "$stats" | cut -d'|' -f2)
+    local daily_record=$(echo "$stats" | cut -d'|' -f3-)
+    
+    echo -e "${GREEN}总使用次数:${NC} ${total}"
+    echo -e "${GREEN}今日使用:${NC} ${today}"
+    echo ""
+    
+    if [[ -n "$daily_record" ]]; then
+        echo -e "${YELLOW}历史记录:${NC}"
+        # 解析 daily_record (格式: 20250120:5;20250121:3)
+        IFS=';' read -ra records <<< "$daily_record"
+        for record in "${records[@]}"; do
+            [[ -z "$record" ]] && continue
+            local r_date=$(echo "$record" | cut -d: -f1)
+            local r_count=$(echo "$record" | cut -d: -f2)
+            local formatted_date=$(date -d "${r_date:0:4}-${r_date:4:2}-${r_date:6:2}" "+%Y-%m-%d" 2>/dev/null || echo "$r_date")
+            echo "  ${formatted_date}: ${r_count} 次"
+        done | tail -10
+    fi
+    
+    echo ""
+    echo -e "${CYAN}============================================================${NC}"
+    echo ""
+    read -rp "按回车键继续..."
+}
+
 show_banner() {
 
     echo ""
 
     echo -e "${CYAN}============================================================${NC}"
 
-    echo -e "${GREEN}           VPS Toolbox - 多功能一键部署工具 v3.0.0${NC}"
+    echo -e "${GREEN}           VPS Toolbox - 多功能一键部署工具 v3.1.0${NC}"
 
     echo -e "${CYAN}============================================================${NC}"
+
+    show_usage_stats
 
     echo -e "  ${YELLOW}作者${NC}: Kitaro-Loked"
 
@@ -5344,7 +5463,9 @@ show_menu() {
 
     echo "    19. 流量统计"
 
-    echo "    20. 卸载服务"
+        echo "    20. 使用统计详情"
+
+    echo "    21. 卸载服务"
 
     echo "    0. 退出脚本"
 
@@ -5362,6 +5483,8 @@ main() {
 
     check_system
 
+    record_usage
+
     install_dependencies
 
     
@@ -5370,7 +5493,7 @@ main() {
 
         show_menu
 
-        read -rp "请选择操作 [0-20]: " choice
+        read -rp "请选择操作 [0-21]: " choice
 
         
 
@@ -5414,7 +5537,9 @@ main() {
 
             19) show_traffic_stats ;;
 
-            20) uninstall_service ;;
+            20) view_stats_menu ;;
+
+            21) uninstall_service ;;
 
             0)
 
