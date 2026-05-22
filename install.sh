@@ -3645,13 +3645,11 @@ get_proxy_status() {
         local xray_port=$(jq -r '.inbounds[0].port // "未知"' /usr/local/etc/xray/config.json 2>/dev/null)
 
         status="${status}✅ Xray: 运行中 (端口: ${xray_port})
-
 "
 
     else
 
         status="${status}❌ Xray: 未运行
-
 "
 
     fi
@@ -3663,13 +3661,11 @@ get_proxy_status() {
     if systemctl is-active --quiet hysteria-server 2>/dev/null || systemctl is-active --quiet hysteria2 2>/dev/null; then
 
         status="${status}✅ Hysteria2: 运行中
-
 "
 
     else
 
         status="${status}❌ Hysteria2: 未运行
-
 "
 
     fi
@@ -3681,13 +3677,11 @@ get_proxy_status() {
     if systemctl is-active --quiet shadowsocks-rust 2>/dev/null || systemctl is-active --quiet shadowsocks 2>/dev/null; then
 
         status="${status}✅ Shadowsocks: 运行中
-
 "
 
     else
 
         status="${status}❌ Shadowsocks: 未运行
-
 "
 
     fi
