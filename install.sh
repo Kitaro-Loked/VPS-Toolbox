@@ -149,27 +149,850 @@ check_ipv6_only() {
 }
 
 # 自动安装 WARP (非交互式，用于 IPv6-only 环境)
-# DDNS 域名申请与管理
+# ==================== DDNS 动态域名解析功能 ====================
+# 支持: Cloudflare / DuckDNS / No-IP / 阿里云 / 腾讯云 DNSPod
+
+DDNS_CONFIG_DIR="$CONFIG_DIR/ddns"
+DDNS_CONFIG_FILE="$DDNS_CONFIG_DIR/config.json"
+DDNS_LOG_FILE="$DDNS_CONFIG_DIR/ddns.log"
+DDNS_PID_FILE="$DDNS_CONFIG_DIR/ddns.pid"
+DDNS_LAST_IP_FILE="$DDNS_CONFIG_DIR/last_ip"
+
+# 初始化 DDNS 目录
+init_ddns() {
+    mkdir -p "$DDNS_CONFIG_DIR"
+    [[ ! -f "$DDNS_CONFIG_FILE" ]] && echo "[]" > "$DDNS_CONFIG_FILE"
+}
+
+# 获取当前公网 IP
+get_current_ip() {
+    local ip_type="${1:-ipv4}"
+    local ip=""
+    
+    if [[ "$ip_type" == "ipv6" ]]; then
+        ip=$(curl -s --max-time 10 -6 https://api.ip.sb/geoip 2>/dev/null | jq -r '.ip' 2>/dev/null)
+        [[ -z "$ip" || "$ip" == "null" ]] && ip=$(curl -s --max-time 10 -6 https://ipapi.co/json/ 2>/dev/null | jq -r '.ip' 2>/dev/null)
+        [[ -z "$ip" || "$ip" == "null" ]] && ip=$(curl -s --max-time 10 -6 https://api6.ipify.org 2>/dev/null)
+    else
+        ip=$(curl -s --max-time 10 https://api.ip.sb/geoip 2>/dev/null | jq -r '.ip' 2>/dev/null)
+        [[ -z "$ip" || "$ip" == "null" ]] && ip=$(curl -s --max-time 10 https://ipapi.co/json/ 2>/dev/null | jq -r '.ip' 2>/dev/null)
+        [[ -z "$ip" || "$ip" == "null" ]] && ip=$(curl -s --max-time 10 https://api.ipify.org 2>/dev/null)
+    fi
+    
+    echo "$ip"
+}
+
+# 记录 DDNS 日志
+ddns_log() {
+    local msg="$1"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    echo "[$timestamp] $msg" >> "$DDNS_LOG_FILE"
+    # 限制日志大小
+    if [[ -f "$DDNS_LOG_FILE" ]] && [[ $(wc -l < "$DDNS_LOG_FILE") -gt 500 ]]; then
+        tail -n 200 "$DDNS_LOG_FILE" > "$DDNS_LOG_FILE.tmp"
+        mv "$DDNS_LOG_FILE.tmp" "$DDNS_LOG_FILE"
+    fi
+}
+
+# ---------- Cloudflare DDNS ----------
+# 使用 Cloudflare API Token 更新 DNS 记录
+cf_ddns_update() {
+    local token="$1"
+    local zone_id="$2"
+    local record_name="$3"
+    local record_type="${4:-A}"
+    local ip="$5"
+    local proxied="${6:-false}"
+    
+    if [[ -z "$token" || -z "$zone_id" || -z "$record_name" || -z "$ip" ]]; then
+        echo "参数缺失"
+        return 1
+    fi
+    
+    # 获取现有记录
+    local list_result=$(curl -s --max-time 15 \
+        -X GET \
+        -H "Authorization: Bearer $token" \
+        -H "Content-Type: application/json" \
+        "https://api.cloudflare.com/client/v4/zones/$zone_id/dns_records?name=$record_name&type=$record_type" 2>/dev/null)
+    
+    local record_id=$(echo "$list_result" | jq -r '.result[0].id' 2>/dev/null)
+    local current_content=$(echo "$list_result" | jq -r '.result[0].content' 2>/dev/null)
+    
+    # 如果记录已存在且 IP 相同，跳过
+    if [[ "$current_content" == "$ip" ]]; then
+        echo "IP 未变化，跳过更新"
+        return 0
+    fi
+    
+    if [[ -n "$record_id" && "$record_id" != "null" ]]; then
+        # 更新现有记录
+        local update_result=$(curl -s --max-time 15 \
+            -X PUT \
+            -H "Authorization: Bearer $token" \
+            -H "Content-Type: application/json" \
+            --data "{\"type\":\"$record_type\",\"name\":\"$record_name\",\"content\":\"$ip\",\"proxied\":$proxied}" \
+            "https://api.cloudflare.com/client/v4/zones/$zone_id/dns_records/$record_id" 2>/dev/null)
+        
+        if echo "$update_result" | jq -e '.success' >/dev/null 2>&1; then
+            echo "更新成功"
+            return 0
+        else
+            local error_msg=$(echo "$update_result" | jq -r '.errors[0].message' 2>/dev/null)
+            echo "更新失败: ${error_msg:-未知错误}"
+            return 1
+        fi
+    else
+        # 创建新记录
+        local create_result=$(curl -s --max-time 15 \
+            -X POST \
+            -H "Authorization: Bearer $token" \
+            -H "Content-Type: application/json" \
+            --data "{\"type\":\"$record_type\",\"name\":\"$record_name\",\"content\":\"$ip\",\"proxied\":$proxied,\"ttl\":120}" \
+            "https://api.cloudflare.com/client/v4/zones/$zone_id/dns_records" 2>/dev/null)
+        
+        if echo "$create_result" | jq -e '.success' >/dev/null 2>&1; then
+            echo "创建成功"
+            return 0
+        else
+            local error_msg=$(echo "$create_result" | jq -r '.errors[0].message' 2>/dev/null)
+            echo "创建失败: ${error_msg:-未知错误}"
+            return 1
+        fi
+    fi
+}
+
+# 获取 Cloudflare Zone ID
+cf_get_zone_id() {
+    local token="$1"
+    local domain="$2"
+    
+    local result=$(curl -s --max-time 15 \
+        -H "Authorization: Bearer $token" \
+        -H "Content-Type: application/json" \
+        "https://api.cloudflare.com/client/v4/zones?name=$domain" 2>/dev/null)
+    
+    echo "$result" | jq -r '.result[0].id' 2>/dev/null
+}
+
+# ---------- DuckDNS DDNS ----------
+duckdns_update() {
+    local domain="$1"
+    local token="$2"
+    local ip="$3"
+    local ip_type="${4:-ipv4}"
+    
+    if [[ -z "$domain" || -z "$token" ]]; then
+        echo "参数缺失"
+        return 1
+    fi
+    
+    local url="https://www.duckdns.org/update?domains=$domain&token=$token"
+    [[ -n "$ip" ]] && url="$url&ip=$ip"
+    [[ "$ip_type" == "ipv6" ]] && url="$url&ipv6=$ip"
+    
+    local result=$(curl -s --max-time 15 "$url" 2>/dev/null)
+    
+    if [[ "$result" == "OK" ]]; then
+        echo "更新成功"
+        return 0
+    else
+        echo "更新失败"
+        return 1
+    fi
+}
+
+# ---------- No-IP DDNS ----------
+noip_update() {
+    local hostname="$1"
+    local username="$2"
+    local password="$3"
+    local ip="$4"
+    
+    if [[ -z "$hostname" || -z "$username" || -z "$password" ]]; then
+        echo "参数缺失"
+        return 1
+    fi
+    
+    local url="https://dynupdate.no-ip.com/nic/update?hostname=$hostname"
+    [[ -n "$ip" ]] && url="$url&myip=$ip"
+    
+    local result=$(curl -s --max-time 15 \
+        -u "$username:$password" \
+        "$url" 2>/dev/null)
+    
+    if [[ "$result" == *"good"* || "$result" == *"nochg"* ]]; then
+        echo "更新成功"
+        return 0
+    else
+        echo "更新失败: $result"
+        return 1
+    fi
+}
+
+# ---------- 阿里云 DDNS ----------
+ali_ddns_update() {
+    local access_key="$1"
+    local access_secret="$2"
+    local domain="$3"
+    local rr="$4"
+    local ip="$5"
+    local record_type="${6:-A}"
+    
+    if [[ -z "$access_key" || -z "$access_secret" || -z "$domain" || -z "$ip" ]]; then
+        echo "参数缺失"
+        return 1
+    fi
+    
+    # 阿里云 DNS API 需要签名，这里使用简化版
+    # 实际生产环境需要完整的签名算法
+    echo "阿里云 DDNS 需要完整签名实现，建议使用 Cloudflare"
+    return 1
+}
+
+# ---------- 腾讯云 DNSPod ----------
+dnspod_update() {
+    local id="$1"
+    local token="$2"
+    local domain="$3"
+    local sub_domain="$4"
+    local ip="$5"
+    local record_type="${6:-A}"
+    
+    if [[ -z "$id" || -z "$token" || -z "$domain" || -z "$ip" ]]; then
+        echo "参数缺失"
+        return 1
+    fi
+    
+    # DNSPod API
+    local login_token="${id},${token}"
+    
+    # 获取记录列表
+    local list_result=$(curl -s --max-time 15 \
+        -X POST \
+        -d "login_token=$login_token&format=json&domain=$domain&sub_domain=$sub_domain&record_type=$record_type" \
+        "https://dnsapi.cn/Record.List" 2>/dev/null)
+    
+    local record_id=$(echo "$list_result" | jq -r '.records[0].id' 2>/dev/null)
+    local current_ip=$(echo "$list_result" | jq -r '.records[0].value' 2>/dev/null)
+    
+    # IP 未变化则跳过
+    if [[ "$current_ip" == "$ip" ]]; then
+        echo "IP 未变化，跳过更新"
+        return 0
+    fi
+    
+    if [[ -n "$record_id" && "$record_id" != "null" ]]; then
+        # 修改记录
+        local modify_result=$(curl -s --max-time 15 \
+            -X POST \
+            -d "login_token=$login_token&format=json&domain=$domain&record_id=$record_id&sub_domain=$sub_domain&record_type=$record_type&record_line=默认&value=$ip" \
+            "https://dnsapi.cn/Record.Modify" 2>/dev/null)
+        
+        if echo "$modify_result" | jq -e '.status.code == "1"' >/dev/null 2>&1; then
+            echo "更新成功"
+            return 0
+        else
+            echo "更新失败"
+            return 1
+        fi
+    else
+        # 创建记录
+        local create_result=$(curl -s --max-time 15 \
+            -X POST \
+            -d "login_token=$login_token&format=json&domain=$domain&sub_domain=$sub_domain&record_type=$record_type&record_line=默认&value=$ip" \
+            "https://dnsapi.cn/Record.Create" 2>/dev/null)
+        
+        if echo "$create_result" | jq -e '.status.code == "1"' >/dev/null 2>&1; then
+            echo "创建成功"
+            return 0
+        else
+            echo "创建失败"
+            return 1
+        fi
+    fi
+}
+
+# ---------- 配置管理 ----------
+
+# 添加 DDNS 配置
+add_ddns_config() {
+    local provider="$1"
+    local domain="$2"
+    local record="$3"
+    local record_type="$4"
+    local ip_type="$5"
+    local interval="$6"
+    local credentials="$7"
+    
+    local config=$(cat "$DDNS_CONFIG_FILE" 2>/dev/null || echo "[]")
+    local new_entry="{\"provider\":\"$provider\",\"domain\":\"$domain\",\"record\":\"$record\",\"record_type\":\"$record_type\",\"ip_type\":\"$ip_type\",\"interval\":$interval,\"credentials\":$credentials,\"enabled\":true,\"last_update\":\"\",\"last_ip\":\"\"}"
+    
+    local new_config=$(echo "$config" | jq ". + [$new_entry]" 2>/dev/null)
+    if [[ -n "$new_config" ]]; then
+        echo "$new_config" > "$DDNS_CONFIG_FILE"
+        return 0
+    fi
+    return 1
+}
+
+# 删除 DDNS 配置
+delete_ddns_config() {
+    local index="$1"
+    local config=$(cat "$DDNS_CONFIG_FILE" 2>/dev/null || echo "[]")
+    local new_config=$(echo "$config" | jq "del(.[$index])" 2>/dev/null)
+    if [[ -n "$new_config" ]]; then
+        echo "$new_config" > "$DDNS_CONFIG_FILE"
+        return 0
+    fi
+    return 1
+}
+
+# 切换 DDNS 启用状态
+toggle_ddns_config() {
+    local index="$1"
+    local config=$(cat "$DDNS_CONFIG_FILE" 2>/dev/null || echo "[]")
+    local new_config=$(echo "$config" | jq "if .[$index] then .[$index].enabled = (.[$index].enabled | not) else . end" 2>/dev/null)
+    if [[ -n "$new_config" ]]; then
+        echo "$new_config" > "$DDNS_CONFIG_FILE"
+        return 0
+    fi
+    return 1
+}
+
+# ---------- DDNS 执行器 ----------
+
+# 执行单个 DDNS 更新
+run_single_ddns() {
+    local index="$1"
+    local config=$(cat "$DDNS_CONFIG_FILE" 2>/dev/null)
+    local entry=$(echo "$config" | jq -r ".[$index]" 2>/dev/null)
+    
+    if [[ -z "$entry" || "$entry" == "null" ]]; then
+        ddns_log "配置 #$index 不存在"
+        return 1
+    fi
+    
+    local enabled=$(echo "$entry" | jq -r '.enabled' 2>/dev/null)
+    if [[ "$enabled" != "true" ]]; then
+        return 0
+    fi
+    
+    local provider=$(echo "$entry" | jq -r '.provider' 2>/dev/null)
+    local domain=$(echo "$entry" | jq -r '.domain' 2>/dev/null)
+    local record=$(echo "$entry" | jq -r '.record' 2>/dev/null)
+    local record_type=$(echo "$entry" | jq -r '.record_type' 2>/dev/null)
+    local ip_type=$(echo "$entry" | jq -r '.ip_type' 2>/dev/null)
+    
+    # 获取当前 IP
+    local current_ip=$(get_current_ip "$ip_type")
+    if [[ -z "$current_ip" ]]; then
+        ddns_log "[$provider][$record.$domain] 获取 IP 失败"
+        return 1
+    fi
+    
+    # 检查 IP 是否变化
+    local last_ip=$(echo "$entry" | jq -r '.last_ip' 2>/dev/null)
+    if [[ "$current_ip" == "$last_ip" && -n "$last_ip" ]]; then
+        return 0
+    fi
+    
+    # 执行更新
+    local result=""
+    case "$provider" in
+        cloudflare)
+            local token=$(echo "$entry" | jq -r '.credentials.token' 2>/dev/null)
+            local zone_id=$(echo "$entry" | jq -r '.credentials.zone_id' 2>/dev/null)
+            local proxied=$(echo "$entry" | jq -r '.credentials.proxied // false' 2>/dev/null)
+            result=$(cf_ddns_update "$token" "$zone_id" "$record.$domain" "$record_type" "$current_ip" "$proxied")
+            ;;
+        duckdns)
+            local token=$(echo "$entry" | jq -r '.credentials.token' 2>/dev/null)
+            result=$(duckdns_update "$record" "$token" "$current_ip" "$ip_type")
+            ;;
+        noip)
+            local username=$(echo "$entry" | jq -r '.credentials.username' 2>/dev/null)
+            local password=$(echo "$entry" | jq -r '.credentials.password' 2>/dev/null)
+            result=$(noip_update "$record.$domain" "$username" "$password" "$current_ip")
+            ;;
+        dnspod)
+            local id=$(echo "$entry" | jq -r '.credentials.id' 2>/dev/null)
+            local token=$(echo "$entry" | jq -r '.credentials.token' 2>/dev/null)
+            result=$(dnspod_update "$id" "$token" "$domain" "$record" "$current_ip" "$record_type")
+            ;;
+        *)
+            ddns_log "[$provider] 未知服务商"
+            return 1
+            ;;
+    esac
+    
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    if [[ "$result" == *"成功"* ]]; then
+        ddns_log "[$provider][$record.$domain] IP 更新: $last_ip -> $current_ip"
+        # 更新配置中的 last_ip 和 last_update
+        local new_config=$(echo "$config" | jq ".[$index].last_ip = \"$current_ip\" | .[$index].last_update = \"$timestamp\"" 2>/dev/null)
+        [[ -n "$new_config" ]] && echo "$new_config" > "$DDNS_CONFIG_FILE"
+        return 0
+    else
+        ddns_log "[$provider][$record.$domain] 更新失败: $result"
+        return 1
+    fi
+}
+
+# 运行所有启用的 DDNS
+run_all_ddns() {
+    local config=$(cat "$DDNS_CONFIG_FILE" 2>/dev/null || echo "[]")
+    local count=$(echo "$config" | jq 'length' 2>/dev/null || echo 0)
+    
+    if [[ "$count" == "0" ]]; then
+        return 0
+    fi
+    
+    ddns_log "开始批量更新 ($count 个配置)"
+    
+    for ((i=0; i<count; i++)); do
+        run_single_ddns "$i"
+    done
+    
+    ddns_log "批量更新完成"
+}
+
+# ---------- 定时任务 ----------
+
+# 安装 systemd 定时服务
+install_ddns_systemd() {
+    local interval="${1:-5}"
+    
+    cat > /etc/systemd/system/vps-toolbox-ddns.service <<EOF
+[Unit]
+Description=VPS Toolbox DDNS Updater
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c 'source $CONFIG_DIR/install.sh 2>/dev/null || true; run_all_ddns'
+EOF
+
+    cat > /etc/systemd/system/vps-toolbox-ddns.timer <<EOF
+[Unit]
+Description=VPS Toolbox DDNS Timer
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=${interval}min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl enable vps-toolbox-ddns.timer 2>/dev/null || true
+    systemctl start vps-toolbox-ddns.timer 2>/dev/null || true
+    
+    ddns_log "systemd 定时任务已安装 (间隔: ${interval}分钟)"
+}
+
+# 安装 cron 定时任务
+install_ddns_cron() {
+    local interval="${1:-5}"
+    
+    # 删除旧任务
+    crontab -l 2>/dev/null | grep -v "vps-toolbox-ddns" > /tmp/cron_backup 2>/dev/null || true
+    
+    # 添加新任务
+    echo "*/$interval * * * * /bin/bash -c 'export CONFIG_DIR=$CONFIG_DIR; source $CONFIG_DIR/ddns/ddns.sh 2>/dev/null; run_all_ddns' >/dev/null 2>&1" >> /tmp/cron_backup
+    crontab /tmp/cron_backup 2>/dev/null || true
+    rm -f /tmp/cron_backup
+    
+    ddns_log "cron 定时任务已安装 (间隔: ${interval}分钟)"
+}
+
+# 卸载定时任务
+uninstall_ddns_timer() {
+    systemctl stop vps-toolbox-ddns.timer 2>/dev/null || true
+    systemctl disable vps-toolbox-ddns.timer 2>/dev/null || true
+    rm -f /etc/systemd/system/vps-toolbox-ddns.timer
+    rm -f /etc/systemd/system/vps-toolbox-ddns.service
+    systemctl daemon-reload 2>/dev/null || true
+    
+    crontab -l 2>/dev/null | grep -v "vps-toolbox-ddns" | crontab - 2>/dev/null || true
+    
+    ddns_log "定时任务已卸载"
+}
+
+# ---------- 交互式菜单 ----------
+
+# 添加 Cloudflare 配置向导
+add_cloudflare_wizard() {
+    echo ""
+    echo -e "${YELLOW}Cloudflare DDNS 配置${NC}"
+    echo ""
+    echo "需要以下信息:"
+    echo "  1. API Token (从 Cloudflare 控制台获取)"
+    echo "  2. Zone ID (域名对应的 Zone ID)"
+    echo "  3. 域名 (如: example.com)"
+    echo "  4. 记录名 (如: www 或 @)"
+    echo "  5. 记录类型 (A 或 AAAA)"
+    echo ""
+    
+    read -rp "API Token: " cf_token
+    read -rp "Zone ID (留空自动获取): " cf_zone_id
+    read -rp "域名 (如 example.com): " cf_domain
+    read -rp "记录名 (如 www 或 @): " cf_record
+    read -rp "记录类型 [A/AAAA] (默认 A): " cf_record_type
+    read -rp "IP 类型 [ipv4/ipv6] (默认 ipv4): " cf_ip_type
+    read -rp "更新间隔(分钟) [1-60] (默认 5): " cf_interval
+    read -rp "是否开启 Cloudflare 代理 [true/false] (默认 false): " cf_proxied
+    
+    [[ -z "$cf_record_type" ]] && cf_record_type="A"
+    [[ -z "$cf_ip_type" ]] && cf_ip_type="ipv4"
+    [[ -z "$cf_interval" ]] && cf_interval=5
+    [[ -z "$cf_proxied" ]] && cf_proxied="false"
+    
+    if [[ -z "$cf_token" || -z "$cf_domain" || -z "$cf_record" ]]; then
+        echo -e "${RED}Token、域名和记录名不能为空${NC}"
+        return 1
+    fi
+    
+    # 自动获取 Zone ID
+    if [[ -z "$cf_zone_id" ]]; then
+        echo -e "${YELLOW}正在获取 Zone ID...${NC}"
+        cf_zone_id=$(cf_get_zone_id "$cf_token" "$cf_domain")
+        if [[ -z "$cf_zone_id" || "$cf_zone_id" == "null" ]]; then
+            echo -e "${RED}获取 Zone ID 失败，请手动输入${NC}"
+            return 1
+        fi
+        echo -e "${GREEN}Zone ID: $cf_zone_id${NC}"
+    fi
+    
+    # 测试连接
+    echo -e "${YELLOW}测试 API 连接...${NC}"
+    local test_result=$(curl -s --max-time 10 \
+        -H "Authorization: Bearer $cf_token" \
+        "https://api.cloudflare.com/client/v4/user/tokens/verify" 2>/dev/null)
+    
+    if ! echo "$test_result" | jq -e '.success' >/dev/null 2>&1; then
+        echo -e "${RED}API Token 验证失败${NC}"
+        return 1
+    fi
+    echo -e "${GREEN}API Token 验证通过${NC}"
+    
+    # 保存配置
+    local credentials="{\"token\":\"$cf_token\",\"zone_id\":\"$cf_zone_id\",\"proxied\":$cf_proxied}"
+    if add_ddns_config "cloudflare" "$cf_domain" "$cf_record" "$cf_record_type" "$cf_ip_type" "$cf_interval" "$credentials"; then
+        echo -e "${GREEN}配置已保存${NC}"
+        
+        # 立即执行一次更新
+        echo -e "${YELLOW}正在执行首次更新...${NC}"
+        local config=$(cat "$DDNS_CONFIG_FILE")
+        local index=$(echo "$config" | jq 'length - 1')
+        run_single_ddns "$index"
+        return 0
+    else
+        echo -e "${RED}配置保存失败${NC}"
+        return 1
+    fi
+}
+
+# 添加 DuckDNS 配置向导
+add_duckdns_wizard() {
+    echo ""
+    echo -e "${YELLOW}DuckDNS 配置${NC}"
+    echo ""
+    echo "DuckDNS 是免费的动态域名服务"
+    echo "官网: https://www.duckdns.org"
+    echo ""
+    
+    read -rp "Token (从 duckdns.org 获取): " duck_token
+    read -rp "子域名 (如: myhome -> myhome.duckdns.org): " duck_domain
+    read -rp "IP 类型 [ipv4/ipv6] (默认 ipv4): " duck_ip_type
+    read -rp "更新间隔(分钟) [1-60] (默认 5): " duck_interval
+    
+    [[ -z "$duck_ip_type" ]] && duck_ip_type="ipv4"
+    [[ -z "$duck_interval" ]] && duck_interval=5
+    
+    if [[ -z "$duck_token" || -z "$duck_domain" ]]; then
+        echo -e "${RED}Token 和子域名不能为空${NC}"
+        return 1
+    fi
+    
+    local credentials="{\"token\":\"$duck_token\"}"
+    if add_ddns_config "duckdns" "$duck_domain.duckdns.org" "$duck_domain" "A" "$duck_ip_type" "$duck_interval" "$credentials"; then
+        echo -e "${GREEN}配置已保存${NC}"
+        
+        echo -e "${YELLOW}正在执行首次更新...${NC}"
+        local config=$(cat "$DDNS_CONFIG_FILE")
+        local index=$(echo "$config" | jq 'length - 1')
+        run_single_ddns "$index"
+        return 0
+    else
+        echo -e "${RED}配置保存失败${NC}"
+        return 1
+    fi
+}
+
+# 添加 No-IP 配置向导
+add_noip_wizard() {
+    echo ""
+    echo -e "${YELLOW}No-IP 配置${NC}"
+    echo ""
+    
+    read -rp "用户名: " noip_user
+    read -rp "密码: " noip_pass
+    read -rp "主机名 (如: myhost.no-ip.biz): " noip_host
+    read -rp "IP 类型 [ipv4/ipv6] (默认 ipv4): " noip_ip_type
+    read -rp "更新间隔(分钟) [1-60] (默认 5): " noip_interval
+    
+    [[ -z "$noip_ip_type" ]] && noip_ip_type="ipv4"
+    [[ -z "$noip_interval" ]] && noip_interval=5
+    
+    if [[ -z "$noip_user" || -z "$noip_pass" || -z "$noip_host" ]]; then
+        echo -e "${RED}所有字段都不能为空${NC}"
+        return 1
+    fi
+    
+    local credentials="{\"username\":\"$noip_user\",\"password\":\"$noip_pass\"}"
+    local domain=$(echo "$noip_host" | sed 's/^[^.]*\.//')
+    local record=$(echo "$noip_host" | sed 's/\..*$//')
+    
+    if add_ddns_config "noip" "$domain" "$record" "A" "$noip_ip_type" "$noip_interval" "$credentials"; then
+        echo -e "${GREEN}配置已保存${NC}"
+        
+        echo -e "${YELLOW}正在执行首次更新...${NC}"
+        local config=$(cat "$DDNS_CONFIG_FILE")
+        local index=$(echo "$config" | jq 'length - 1')
+        run_single_ddns "$index"
+        return 0
+    else
+        echo -e "${RED}配置保存失败${NC}"
+        return 1
+    fi
+}
+
+# 添加 DNSPod 配置向导
+add_dnspod_wizard() {
+    echo ""
+    echo -e "${YELLOW}腾讯云 DNSPod 配置${NC}"
+    echo ""
+    
+    read -rp "API ID: " dp_id
+    read -rp "API Token: " dp_token
+    read -rp "域名 (如: example.com): " dp_domain
+    read -rp "子域名 (如: www 或 @): " dp_record
+    read -rp "记录类型 [A/AAAA] (默认 A): " dp_record_type
+    read -rp "IP 类型 [ipv4/ipv6] (默认 ipv4): " dp_ip_type
+    read -rp "更新间隔(分钟) [1-60] (默认 5): " dp_interval
+    
+    [[ -z "$dp_record_type" ]] && dp_record_type="A"
+    [[ -z "$dp_ip_type" ]] && dp_ip_type="ipv4"
+    [[ -z "$dp_interval" ]] && dp_interval=5
+    
+    if [[ -z "$dp_id" || -z "$dp_token" || -z "$dp_domain" || -z "$dp_record" ]]; then
+        echo -e "${RED}所有字段都不能为空${NC}"
+        return 1
+    fi
+    
+    local credentials="{\"id\":\"$dp_id\",\"token\":\"$dp_token\"}"
+    if add_ddns_config "dnspod" "$dp_domain" "$dp_record" "$dp_record_type" "$dp_ip_type" "$dp_interval" "$credentials"; then
+        echo -e "${GREEN}配置已保存${NC}"
+        
+        echo -e "${YELLOW}正在执行首次更新...${NC}"
+        local config=$(cat "$DDNS_CONFIG_FILE")
+        local index=$(echo "$config" | jq 'length - 1')
+        run_single_ddns "$index"
+        return 0
+    else
+        echo -e "${RED}配置保存失败${NC}"
+        return 1
+    fi
+}
+
+# 显示 DDNS 配置列表
+show_ddns_list() {
+    local config=$(cat "$DDNS_CONFIG_FILE" 2>/dev/null || echo "[]")
+    local count=$(echo "$config" | jq 'length' 2>/dev/null || echo 0)
+    
+    if [[ "$count" == "0" ]]; then
+        echo -e "${YELLOW}暂无 DDNS 配置${NC}"
+        return
+    fi
+    
+    echo ""
+    echo -e "${CYAN}============================================================${NC}"
+    echo -e "${CYAN}                    DDNS 配置列表${NC}"
+    echo -e "${CYAN}============================================================${NC}"
+    echo ""
+    
+    echo "$config" | jq -r '.[] | "  [\(.enabled | if . then \"✓\" else \"✗\" end)] \(.provider) | \(.record).\(.domain) | \(.record_type) | IP:\(.ip_type) | 间隔:\(.interval)min | 上次:\(.last_update // \"从未\") | IP:\(.last_ip // \"-\")"' 2>/dev/null | nl -v 0
+}
+
+# 查看 DDNS 日志
+show_ddns_logs() {
+    if [[ ! -f "$DDNS_LOG_FILE" ]]; then
+        echo -e "${YELLOW}暂无日志${NC}"
+        return
+    fi
+    
+    echo ""
+    echo -e "${CYAN}============================================================${NC}"
+    echo -e "${CYAN}                    DDNS 更新日志 (最近 50 条)${NC}"
+    echo -e "${CYAN}============================================================${NC}"
+    echo ""
+    tail -n 50 "$DDNS_LOG_FILE"
+}
+
+# DDNS 主菜单
 setup_ddns() {
-    clear
-    echo ""
-    echo -e "${CYAN}============================================================${NC}"
-    echo -e "${CYAN}              DDNS 域名申请与管理${NC}"
-    echo -e "${CYAN}============================================================${NC}"
-    echo ""
-    echo -e "${YELLOW}DDNS 功能暂未实现，请使用以下方式:${NC}"
-    echo ""
-    echo "  1. Cloudflare DNS API + acme.sh 自动续签"
-    echo "  2. DuckDNS (免费)"
-    echo "  3. No-IP (免费)"
-    echo ""
-    echo -e "${YELLOW}推荐使用 Cloudflare + acme.sh 组合:${NC}"
-    echo ""
-    echo "  curl https://get.acme.sh | sh"
-    echo "  ~/.acme.sh/acme.sh --register-account -m your@email.com"
-    echo "  ~/.acme.sh/acme.sh --issue --dns dns_cf -d your.domain.com"
-    echo ""
-    read -rp "按回车键继续..."
+    init_ddns
+    
+    while true; do
+        clear
+        echo ""
+        echo -e "${CYAN}============================================================${NC}"
+        echo -e "${CYAN}              DDNS 动态域名解析管理${NC}"
+        echo -e "${CYAN}============================================================${NC}"
+        echo ""
+        
+        # 显示当前配置
+        local config=$(cat "$DDNS_CONFIG_FILE" 2>/dev/null || echo "[]")
+        local count=$(echo "$config" | jq 'length' 2>/dev/null || echo 0)
+        
+        if [[ "$count" -gt 0 ]]; then
+            echo -e "${YELLOW}当前配置 (${count}个):${NC}"
+            echo "$config" | jq -r '.[] | "  [\(.enabled | if . then \"✓\" else \"✗\" end)] \(.provider) | \(.record).\(.domain) | 上次:\(.last_update // \"从未\")"' 2>/dev/null
+            echo ""
+        fi
+        
+        echo -e "${YELLOW}操作选项:${NC}"
+        echo "  1. 添加 Cloudflare DDNS"
+        echo "  2. 添加 DuckDNS (免费)"
+        echo "  3. 添加 No-IP"
+        echo "  4. 添加 腾讯云 DNSPod"
+        echo ""
+        echo "  5. 查看配置列表"
+        echo "  6. 启用/禁用配置"
+        echo "  7. 删除配置"
+        echo "  8. 立即执行更新"
+        echo "  9. 查看更新日志"
+        echo ""
+        echo "  10. 安装定时任务 (systemd/cron)"
+        echo "  11. 卸载定时任务"
+        echo "  12. 查看当前公网 IP"
+        echo ""
+        echo "  0. 返回主菜单"
+        echo ""
+        
+        read -rp "请选择 [0-12]: " ddns_choice
+        
+        case $ddns_choice in
+            1)
+                add_cloudflare_wizard
+                echo ""
+                read -rp "按回车键继续..."
+                ;;
+            2)
+                add_duckdns_wizard
+                echo ""
+                read -rp "按回车键继续..."
+                ;;
+            3)
+                add_noip_wizard
+                echo ""
+                read -rp "按回车键继续..."
+                ;;
+            4)
+                add_dnspod_wizard
+                echo ""
+                read -rp "按回车键继续..."
+                ;;
+            5)
+                show_ddns_list
+                echo ""
+                read -rp "按回车键继续..."
+                ;;
+            6)
+                show_ddns_list
+                echo ""
+                read -rp "请输入要切换的配置编号: " toggle_idx
+                if [[ "$toggle_idx" =~ ^[0-9]+$ ]]; then
+                    if toggle_ddns_config "$toggle_idx"; then
+                        echo -e "${GREEN}状态已切换${NC}"
+                    else
+                        echo -e "${RED}切换失败${NC}"
+                    fi
+                fi
+                echo ""
+                read -rp "按回车键继续..."
+                ;;
+            7)
+                show_ddns_list
+                echo ""
+                read -rp "请输入要删除的配置编号: " del_idx
+                if [[ "$del_idx" =~ ^[0-9]+$ ]]; then
+                    if delete_ddns_config "$del_idx"; then
+                        echo -e "${GREEN}配置已删除${NC}"
+                    else
+                        echo -e "${RED}删除失败${NC}"
+                    fi
+                fi
+                echo ""
+                read -rp "按回车键继续..."
+                ;;
+            8)
+                echo -e "${YELLOW}正在执行更新...${NC}"
+                run_all_ddns
+                echo -e "${GREEN}更新完成${NC}"
+                echo ""
+                read -rp "按回车键继续..."
+                ;;
+            9)
+                show_ddns_logs
+                echo ""
+                read -rp "按回车键继续..."
+                ;;
+            10)
+                echo ""
+                echo -e "${YELLOW}安装定时任务${NC}"
+                read -rp "更新间隔(分钟) [默认5]: " timer_interval
+                [[ -z "$timer_interval" ]] && timer_interval=5
+                
+                if command -v systemctl &>/dev/null; then
+                    install_ddns_systemd "$timer_interval"
+                    echo -e "${GREEN}systemd 定时任务已安装${NC}"
+                else
+                    install_ddns_cron "$timer_interval"
+                    echo -e "${GREEN}cron 定时任务已安装${NC}"
+                fi
+                echo ""
+                read -rp "按回车键继续..."
+                ;;
+            11)
+                uninstall_ddns_timer
+                echo -e "${GREEN}定时任务已卸载${NC}"
+                echo ""
+                read -rp "按回车键继续..."
+                ;;
+            12)
+                echo ""
+                echo -e "${YELLOW}正在获取公网 IP...${NC}"
+                local v4_ip=$(get_current_ip "ipv4")
+                local v6_ip=$(get_current_ip "ipv6")
+                echo -e "  IPv4: ${GREEN}${v4_ip:-获取失败}${NC}"
+                echo -e "  IPv6: ${GREEN}${v6_ip:-获取失败}${NC}"
+                echo ""
+                read -rp "按回车键继续..."
+                ;;
+            0)
+                return
+                ;;
+            *)
+                warn "无效选择"
+                sleep 1
+                ;;
+        esac
+    done
 }
 
 setup_warp() {
@@ -520,14 +1343,13 @@ view_config() {
 
     
 
-    if [[ -f "$CONFIG_DIR/ddns.conf" ]]; then
-
-        echo -e "${GREEN}[DDNS 配置]${NC}"
-
-        cat "$CONFIG_DIR/ddns.conf"
-
-        echo ""
-
+    if [[ -f "$DDNS_CONFIG_FILE" ]]; then
+        local ddns_count=$(cat "$DDNS_CONFIG_FILE" | jq 'length' 2>/dev/null || echo 0)
+        if [[ "$ddns_count" -gt 0 ]]; then
+            echo -e "${GREEN}[DDNS 动态域名配置 (${ddns_count}个)]${NC}"
+            cat "$DDNS_CONFIG_FILE" | jq -r '.[] | "  [\(.enabled | if . then "启用" else "禁用" end)] \(.provider) | \(.record).\(.domain) | 类型:\(.record_type) | 上次更新:\(.last_update // "从未") | 当前IP:\(.last_ip // "-")"' 2>/dev/null
+            echo ""
+        fi
     fi
 
     
