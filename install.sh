@@ -2340,13 +2340,17 @@ dd_system() {
 
     echo "  6. Alpine Linux"
 
-    echo "  7. Windows Server 2022 (实验性)"
+    echo "  7. Rocky Linux 9"
+
+    echo "  8. AlmaLinux 9"
+
+    echo "  9. Windows Server 2022 (实验性)"
 
     echo ""
 
-    echo "  8. 自定义镜像 URL"
+    echo "  10. 自定义镜像 URL"
 
-    echo "  9. 返回主菜单"
+    echo "  11. 返回主菜单"
 
     echo ""
 
@@ -2354,45 +2358,83 @@ dd_system() {
 
     echo ""
 
-    read -rp "请选择 [1-9]: " dd_choice
+    read -rp "请选择 [1-11]: " dd_choice
 
     
 
-    local image_url=""
+    local install_args=""
 
     local distro=""
+
+    local is_dd=0
+
+    local image_url=""
 
     
 
     case $dd_choice in
 
-        1) image_url="https://github.com/veip007/dd/raw/master/Debian_12.img.gz"; distro="Debian 12" ;;
+        1) install_args="-debian 12"; distro="Debian 12" ;;
 
-        2) image_url="https://github.com/veip007/dd/raw/master/Debian_11.img.gz"; distro="Debian 11" ;;
+        2) install_args="-debian 11"; distro="Debian 11" ;;
 
-        3) image_url="https://github.com/veip007/dd/raw/master/Ubuntu_2404.img.gz"; distro="Ubuntu 24.04" ;;
+        3) install_args="-ubuntu 24.04"; distro="Ubuntu 24.04" ;;
 
-        4) image_url="https://github.com/veip007/dd/raw/master/Ubuntu_2204.img.gz"; distro="Ubuntu 22.04" ;;
+        4) install_args="-ubuntu 22.04"; distro="Ubuntu 22.04" ;;
 
-        5) image_url="https://github.com/veip007/dd/raw/master/CentOS_9_Stream.img.gz"; distro="CentOS Stream 9" ;;
+        5) install_args="-centos 9"; distro="CentOS Stream 9" ;;
 
-        6) image_url="https://github.com/veip007/dd/raw/master/Alpine_3_19.img.gz"; distro="Alpine Linux" ;;
+        6) install_args="-alpine 3.19"; distro="Alpine Linux" ;;
 
-        7) image_url="https://github.com/veip007/dd/raw/master/Windows_Server_2022.img.gz"; distro="Windows Server 2022" ;;
+        7) install_args="-rockylinux 9"; distro="Rocky Linux 9" ;;
 
-        8)
+        8) install_args="-almalinux 9"; distro="AlmaLinux 9" ;;
+
+        9)
+
+            echo ""
+
+            read -rp "请输入Windows镜像URL (直接回车使用默认镜像): " win_url
+
+            if [[ -n "$win_url" ]]; then
+
+                install_args="-windows 2022 --image \"$win_url\""
+
+            else
+
+                install_args="-windows 2022"
+
+            fi
+
+            distro="Windows Server 2022"
+
+            ;;
+
+        10)
 
             echo ""
 
             read -rp "请输入自定义镜像 URL: " custom_url
 
+            if [[ -z "$custom_url" ]]; then
+
+                warn "未输入镜像地址"
+
+                return
+
+            fi
+
             image_url="$custom_url"
+
+            install_args="-dd \"$image_url\""
 
             distro="自定义系统"
 
+            is_dd=1
+
             ;;
 
-        9)
+        11)
 
             return
 
@@ -2410,7 +2452,7 @@ dd_system() {
 
     
 
-    if [[ -z "$image_url" ]]; then
+    if [[ -z "$install_args" ]]; then
 
         return
 
@@ -2430,7 +2472,11 @@ dd_system() {
 
     echo -e "目标系统: ${YELLOW}${distro}${NC}"
 
-    echo -e "镜像地址: ${YELLOW}${image_url}${NC}"
+    if [[ "$is_dd" -eq 1 ]]; then
+
+        echo -e "镜像地址: ${YELLOW}${image_url}${NC}"
+
+    fi
 
     echo ""
 
@@ -2490,31 +2536,35 @@ dd_system() {
 
     
 
-    # 下载并执行 DD 脚本
+    # 下载并执行 InstallNET 脚本
 
-    echo -e "${YELLOW}正在下载 DD 脚本...${NC}"
+    echo -e "${YELLOW}正在下载系统重装脚本...${NC}"
 
     cd /tmp 2>/dev/null || true
 
     
 
-    # 使用成熟的 DD 脚本 (MoeClub 的 dd 脚本)
-
-    wget -qO- https://raw.githubusercontent.com/fcurrk/reinstall/master/Network-Reinstall-System-Modify.sh | bash -s -- -dd "$image_url"
+    local script_url="https://raw.githubusercontent.com/leitbogioro/Tools/master/Linux_reinstall/InstallNET.sh"
 
     
 
-    # 如果上面的脚本失败，尝试备用方案
+    # 先下载脚本到本地，避免管道中失败无法检测
 
-    if [[ $? -ne 0 ]]; then
-
-        echo -e "${YELLOW}主脚本失败，尝试备用方案...${NC}"
-
-        wget -qO /tmp/InstallNET.sh https://raw.githubusercontent.com/leitbogioro/Tools/master/Linux_reinstall/InstallNET.sh
+    if wget --no-check-certificate -qO /tmp/InstallNET.sh "$script_url"; then
 
         chmod +x /tmp/InstallNET.sh
 
-        bash /tmp/InstallNET.sh -debian 12
+        echo -e "${YELLOW}开始重装系统，请稍候...${NC}"
+
+        echo -e "${YELLOW}默认密码: ${GREEN}LeitboGi0ro${NC}"
+
+        echo ""
+
+        eval "bash /tmp/InstallNET.sh $install_args"
+
+    else
+
+        error "下载重装脚本失败，请检查网络连接"
 
     fi
 
