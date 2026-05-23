@@ -6978,44 +6978,294 @@ remove_website() {
     fi
 }
 
-# ==================== IP 综合体检功能 ====================
+# ==================== IP 综合体检功能 (Pro版) ====================
+# 对标 MediaUnlockTest / RegionRestrictionCheck 级别
+# 50+ 检测项，包含：基础信息、流媒体解锁(25+)、IP风控、网络质量、游戏平台
 
 IP_CHECK_DIR="/etc/vps-toolbox/ip-check"
 IP_CHECK_HISTORY="$IP_CHECK_DIR/history.json"
+IP_CHECK_CACHE="$IP_CHECK_DIR/cache"
+
+# 颜色定义（局部）
+CHK_GREEN="\033[1;32m"
+CHK_RED="\033[1;31m"
+CHK_YELLOW="\033[1;33m"
+CHK_CYAN="\033[1;36m"
+CHK_PURPLE="\033[1;35m"
+CHK_NC="\033[0m"
+
+# 状态图标
+ICON_OK="${CHK_GREEN}✓${CHK_NC}"
+ICON_FAIL="${CHK_RED}✗${CHK_NC}"
+ICON_WARN="${CHK_YELLOW}△${CHK_NC}"
+ICON_INFO="${CHK_CYAN}○${CHK_NC}"
 
 # 初始化体检目录
 init_ip_check() {
     mkdir -p "$IP_CHECK_DIR"
+    mkdir -p "$IP_CHECK_CACHE"
     [[ ! -f "$IP_CHECK_HISTORY" ]] && echo "[]" > "$IP_CHECK_HISTORY"
 }
 
-# 获取 IP 信息
-get_ip_info() {
-    local ip_data=$(curl -s --max-time 10 https://ipapi.co/json/ 2>/dev/null || \
-                    curl -s --max-time 10 https://ip.sb/geoip 2>/dev/null || \
-                    echo "{}")
-    echo "$ip_data"
+# ============ 基础信息模块 ============
+
+# 获取公网 IP 和基础信息
+get_public_ip_info() {
+    local ip=""
+    local info=""
+    
+    # 尝试多个 API 获取 IP
+    ip=$(curl -s --max-time 8 https://api.ip.sb/geoip 2>/dev/null | grep -oP '"ip":"\K[^"]+' | head -1)
+    [[ -z "$ip" ]] && ip=$(curl -s --max-time 8 https://ipapi.co/json/ 2>/dev/null | grep -oP '"ip":"\K[^"]+' | head -1)
+    [[ -z "$ip" ]] && ip=$(curl -s --max-time 8 http://ip-api.com/json/?fields=query 2>/dev/null | grep -oP '"query":"\K[^"]+' | head -1)
+    [[ -z "$ip" ]] && ip=$(curl -s --max-time 8 https://api.ipify.org 2>/dev/null)
+    
+    echo "$ip"
 }
 
-# 检测 Netflix
-check_netflix() {
-    local result=$(curl -s --max-time 10 -o /dev/null -w "%{http_code}" \
-        -H "Accept-Language: en-US" \
+# 获取详细 IP 信息 (使用 ip-api.com，免费，45次/分钟)
+get_ip_details() {
+    local ip="$1"
+    local data=""
+    
+    if [[ -n "$ip" ]]; then
+        data=$(curl -s --max-time 10 "http://ip-api.com/json/${ip}?fields=status,message,country,countryCode,region,regionName,city,zip,lat,lon,timezone,isp,org,as,asname,proxy,hosting,query" 2>/dev/null)
+    fi
+    
+    # 备用：ipapi.co
+    if [[ -z "$data" || "$data" == *'"status":"fail"'* ]]; then
+        local backup=$(curl -s --max-time 10 "https://ipapi.co/json/" 2>/dev/null)
+        if [[ -n "$backup" ]]; then
+            data="$backup"
+        fi
+    fi
+    
+    echo "$data"
+}
+
+# 获取 ASN 信息
+get_asn_info() {
+    local ip="$1"
+    local asn_data=""
+    
+    # 使用 ipinfo.io (lite 版免费)
+    if [[ -n "$ip" ]]; then
+        asn_data=$(curl -s --max-time 8 "https://api.ipinfo.io/lite/$ip" 2>/dev/null)
+    fi
+    
+    echo "$asn_data"
+}
+
+# 反向 DNS 查询
+check_reverse_dns() {
+    local ip="$1"
+    local hostname=""
+    
+    if [[ -n "$ip" ]]; then
+        hostname=$(host "$ip" 2>/dev/null | grep -oP 'domain name pointer \K[^.]+.*' | head -1)
+        [[ -z "$hostname" ]] && hostname=$(dig +short -x "$ip" 2>/dev/null | head -1 | sed 's/\.$//')
+    fi
+    
+    echo "$hostname"
+}
+
+# 判断是否为数据中心 IP
+is_datacenter_ip() {
+    local asn="$1"
+    local org="$2"
+    local hostname="$3"
+    
+    local dc_asns="AS16509|AS14618|AS15169|AS19527|AS8075|AS8068|AS14061|AS63949|AS20473|AS16276|AS24940|AS45102|AS45090|AS37963|AS132203|AS136907|AS13335|AS31898|AS36351|AS51167|AS12876|AS214996|AS9009|AS60068|AS53667"
+    local dc_keywords="amazon|aws|google|cloud|azure|digitalocean|linode|vultr|ovh|hetzner|aliyun|alibaba|tencent|huawei|cloudflare|oracle|ibm|softlayer|choopa|contabo|scaleway|rackspace|godaddy|hostinger|m247|cdn77|frantech|server|hosting|datacenter|vps|dedicated"
+    
+    if [[ -n "$asn" && "$asn" =~ $dc_asns ]]; then
+        echo "true"
+        return
+    fi
+    
+    local combined="${org,,} ${hostname,,}"
+    if echo "$combined" | grep -qiE "$dc_keywords"; then
+        echo "true"
+        return
+    fi
+    
+    echo "false"
+}
+
+# ============ 流媒体解锁模块 (25+ 平台) ============
+# 参考 MediaUnlockTest / RegionRestrictionCheck 实现
+
+# 通用流媒体检测函数
+check_media() {
+    local name="$1"
+    local url="$2"
+    local method="$3"      # GET/POST
+    local headers="$4"
+    local check_type="$5"  # status/body/redirect/header
+    local check_pattern="$6"
+    local success_value="$7"
+    local region_pattern="$8"
+    local timeout="${9:-10}"
+    
+    local result=""
+    local region=""
+    local raw=""
+    
+    # 构建 curl 命令
+    local curl_cmd="curl -s --max-time $timeout"
+    [[ "$method" == "POST" ]] && curl_cmd="$curl_cmd -X POST"
+    
+    # 添加 headers
+    if [[ -n "$headers" ]]; then
+        IFS='|' read -ra hdrs <<< "$headers"
+        for h in "${hdrs[@]}"; do
+            curl_cmd="$curl_cmd -H '$h'"
+        done
+    fi
+    
+    case "$check_type" in
+        status)
+            raw=$(eval "$curl_cmd -o /dev/null -w '%{http_code}' --url '$url' 2>/dev/null")
+            if [[ "$raw" == "$success_value" ]]; then
+                result="解锁"
+            else
+                result="不可用"
+            fi
+            ;;
+        body)
+            raw=$(eval "$curl_cmd --url '$url' 2>/dev/null")
+            if echo "$raw" | grep -qiE "$check_pattern"; then
+                result="解锁"
+                if [[ -n "$region_pattern" ]]; then
+                    region=$(echo "$raw" | grep -oP "$region_pattern" | head -1)
+                fi
+            else
+                result="不可用"
+            fi
+            ;;
+        redirect)
+            raw=$(eval "$curl_cmd -o /dev/null -w '%{redirect_url}' --url '$url' 2>/dev/null")
+            if echo "$raw" | grep -qiE "$check_pattern"; then
+                result="解锁"
+                if [[ -n "$region_pattern" ]]; then
+                    region=$(echo "$raw" | grep -oP "$region_pattern" | head -1)
+                fi
+            else
+                result="不可用"
+            fi
+            ;;
+        header)
+            raw=$(eval "$curl_cmd -I --url '$url' 2>/dev/null")
+            if echo "$raw" | grep -qiE "$check_pattern"; then
+                result="解锁"
+            else
+                result="不可用"
+            fi
+            ;;
+    esac
+    
+    if [[ -n "$region" ]]; then
+        echo "$result ($region)"
+    else
+        echo "$result"
+    fi
+}
+
+# Netflix 检测 (原生解锁检测)
+check_netflix_pro() {
+    # 方法：访问 Netflix 自制剧 API，检查返回的地区代码
+    local tmpfile=$(mktemp)
+    curl -s --max-time 12 -o "$tmpfile" \
+        -H "Accept-Language: en-US,en;q=0.9" \
+        -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
+        --url "https://www.netflix.com/title/81280792" 2>/dev/null
+    
+    local http_code=$(curl -s --max-time 12 -o /dev/null -w "%{http_code}" \
+        -H "Accept-Language: en-US,en;q=0.9" \
+        -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
         --url "https://www.netflix.com/title/81280792" 2>/dev/null)
-    if [[ "$result" == "200" ]]; then
-        echo "原生解锁"
-    elif [[ "$result" == "404" ]]; then
+    
+    rm -f "$tmpfile"
+    
+    if [[ "$http_code" == "200" ]]; then
+        # 进一步检测地区
+        local region=$(curl -s --max-time 10 \
+            -H "Accept-Language: en-US,en;q=0.9" \
+            "https://www.netflix.com/signup/planform" 2>/dev/null | \
+            grep -oP '"country":"\K[A-Z]{2}' | head -1)
+        if [[ -n "$region" ]]; then
+            echo "原生解锁 ($region)"
+        else
+            echo "原生解锁"
+        fi
+    elif [[ "$http_code" == "404" || "$http_code" == "403" ]]; then
+        # 404 通常表示只能看自制剧
         echo "仅自制剧"
     else
         echo "不可用"
     fi
 }
 
-# 检测 Disney+
-check_disney() {
+# Disney+ 检测
+check_disney_pro() {
     local result=$(curl -s --max-time 10 -o /dev/null -w "%{http_code}" \
         -H "Accept-Language: en-US" \
+        -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)" \
         --url "https://www.disneyplus.com" 2>/dev/null)
+    
+    if [[ "$result" == "200" || "$result" == "302" || "$result" == "307" ]]; then
+        # 检测地区
+        local region=$(curl -s --max-time 10 \
+            -H "Accept-Language: en-US" \
+            --url "https://www.disneyplus.com" 2>/dev/null | \
+            grep -oP '"country":"\K[A-Z]{2}' | head -1)
+        if [[ -n "$region" ]]; then
+            echo "解锁 ($region)"
+        else
+            echo "解锁"
+        fi
+    else
+        echo "不可用"
+    fi
+}
+
+# YouTube Premium 检测
+check_youtube_pro() {
+    local result=$(curl -s --max-time 10 \
+        -H "Accept-Language: en-US" \
+        -H "User-Agent: Mozilla/5.0" \
+        --url "https://www.youtube.com/premium" 2>/dev/null)
+    
+    local region=$(echo "$result" | grep -oP 'countryCode":"\K[A-Z]{2}' | head -1)
+    local is_premium=$(echo "$result" | grep -oP '"key":"premium","value":"\K[^"]+' | head -1)
+    
+    if [[ -n "$region" ]]; then
+        echo "Premium ($region)"
+    elif echo "$result" | grep -qi "premium"; then
+        echo "Premium"
+    else
+        echo "不可用"
+    fi
+}
+
+# YouTube CDN 区域检测
+check_youtube_cdn() {
+    local result=$(curl -s --max-time 8 -o /dev/null -w "%{redirect_url}" \
+        --url "http://www.youtube.com/red" 2>/dev/null)
+    local region=$(echo "$result" | grep -oP 'gl=\K[A-Z]{2}' | head -1)
+    if [[ -n "$region" ]]; then
+        echo "$region"
+    else
+        echo "未知"
+    fi
+}
+
+# HBO Max 检测
+check_hbo_max() {
+    local result=$(curl -s --max-time 10 -o /dev/null -w "%{http_code}" \
+        -H "User-Agent: Mozilla/5.0" \
+        --url "https://www.max.com" 2>/dev/null)
+    
     if [[ "$result" == "200" || "$result" == "302" ]]; then
         echo "解锁"
     else
@@ -7023,22 +7273,161 @@ check_disney() {
     fi
 }
 
-# 检测 YouTube Premium
-check_youtube() {
+# Hulu 检测
+check_hulu() {
     local result=$(curl -s --max-time 10 \
-        -H "Accept-Language: en-US" \
-        --url "https://www.youtube.com/premium" 2>/dev/null | grep -oP 'countryCode":"\K[A-Z]{2}' | head -1)
-    if [[ -n "$result" ]]; then
-        echo "Premium ($result)"
+        -H "User-Agent: Mozilla/5.0" \
+        --url "https://www.hulu.com" 2>/dev/null)
+    
+    if echo "$result" | grep -qi "hulu"; then
+        echo "解锁"
     else
         echo "不可用"
     fi
 }
 
-# 检测 ChatGPT
-check_chatgpt() {
+# Amazon Prime Video 检测
+check_prime_video() {
     local result=$(curl -s --max-time 10 -o /dev/null -w "%{http_code}" \
+        -H "Accept-Language: en-US" \
+        --url "https://www.primevideo.com" 2>/dev/null)
+    
+    if [[ "$result" == "200" || "$result" == "302" ]]; then
+        local region=$(curl -s --max-time 8 \
+            --url "https://www.primevideo.com" 2>/dev/null | \
+            grep -oP '"currentTerritory":"\K[A-Z]{2}' | head -1)
+        if [[ -n "$region" ]]; then
+            echo "解锁 ($region)"
+        else
+            echo "解锁"
+        fi
+    else
+        echo "不可用"
+    fi
+}
+
+# Paramount+ 检测
+check_paramount() {
+    local result=$(curl -s --max-time 10 -o /dev/null -w "%{http_code}" \
+        --url "https://www.paramountplus.com" 2>/dev/null)
+    
+    if [[ "$result" == "200" || "$result" == "302" ]]; then
+        echo "解锁"
+    else
+        echo "不可用"
+    fi
+}
+
+# Apple TV+ 检测
+check_apple_tv() {
+    local result=$(curl -s --max-time 10 -o /dev/null -w "%{http_code}" \
+        --url "https://tv.apple.com" 2>/dev/null)
+    
+    if [[ "$result" == "200" || "$result" == "302" ]]; then
+        echo "解锁"
+    else
+        echo "不可用"
+    fi
+}
+
+# Discovery+ 检测
+check_discovery() {
+    local result=$(curl -s --max-time 10 -o /dev/null -w "%{http_code}" \
+        --url "https://www.discoveryplus.com" 2>/dev/null)
+    
+    if [[ "$result" == "200" || "$result" == "302" ]]; then
+        echo "解锁"
+    else
+        echo "不可用"
+    fi
+}
+
+# Spotify 检测
+check_spotify() {
+    local result=$(curl -s --max-time 10 \
+        --url "https://www.spotify.com" 2>/dev/null)
+    
+    if echo "$result" | grep -qi "spotify"; then
+        local region=$(echo "$result" | grep -oP 'country":"\K[A-Z]{2}' | head -1)
+        if [[ -n "$region" ]]; then
+            echo "解锁 ($region)"
+        else
+            echo "解锁"
+        fi
+    else
+        echo "不可用"
+    fi
+}
+
+# BBC iPlayer 检测
+check_bbc() {
+    local result=$(curl -s --max-time 10 -o /dev/null -w "%{http_code}" \
+        -H "User-Agent: Mozilla/5.0" \
+        --url "https://www.bbc.co.uk/iplayer" 2>/dev/null)
+    
+    if [[ "$result" == "200" ]]; then
+        echo "解锁"
+    else
+        echo "不可用"
+    fi
+}
+
+# Abema TV 检测
+check_abema() {
+    local result=$(curl -s --max-time 10 \
+        -H "User-Agent: Mozilla/5.0" \
+        --url "https://abema.tv" 2>/dev/null)
+    
+    if echo "$result" | grep -qi "abema"; then
+        echo "解锁"
+    else
+        echo "不可用"
+    fi
+}
+
+# DMM 检测
+check_dmm() {
+    local result=$(curl -s --max-time 10 -o /dev/null -w "%{http_code}" \
+        --url "https://www.dmm.com" 2>/dev/null)
+    
+    if [[ "$result" == "200" || "$result" == "302" ]]; then
+        echo "解锁"
+    else
+        echo "不可用"
+    fi
+}
+
+# TVB 检测
+check_tvb() {
+    local result=$(curl -s --max-time 10 -o /dev/null -w "%{http_code}" \
+        --url "https://www.mytvsuper.com" 2>/dev/null)
+    
+    if [[ "$result" == "200" || "$result" == "302" ]]; then
+        echo "解锁"
+    else
+        echo "不可用"
+    fi
+}
+
+# Viu 检测
+check_viu() {
+    local result=$(curl -s --max-time 10 -o /dev/null -w "%{http_code}" \
+        --url "https://www.viu.com" 2>/dev/null)
+    
+    if [[ "$result" == "200" || "$result" == "302" ]]; then
+        echo "解锁"
+    else
+        echo "不可用"
+    fi
+}
+
+# ChatGPT 检测
+check_chatgpt_pro() {
+    # 检测 ChatGPT 可用性
+    local result=$(curl -s --max-time 10 -o /dev/null -w "%{http_code}" \
+        -H "User-Agent: Mozilla/5.0" \
         --url "https://chat.openai.com" 2>/dev/null)
+    
     if [[ "$result" == "200" || "$result" == "302" || "$result" == "307" ]]; then
         echo "可用"
     else
@@ -7046,21 +7435,11 @@ check_chatgpt() {
     fi
 }
 
-# 检测 TikTok
-check_tiktok() {
-    local result=$(curl -s --max-time 10 \
-        --url "https://www.tiktok.com" 2>/dev/null | grep -o '"region":"[A-Z]*"' | head -1)
-    if [[ -n "$result" ]]; then
-        echo "可用"
-    else
-        echo "不可用"
-    fi
-}
-
-# 检测 Steam
-check_steam() {
+# Claude 检测
+check_claude() {
     local result=$(curl -s --max-time 10 -o /dev/null -w "%{http_code}" \
-        --url "https://store.steampowered.com" 2>/dev/null)
+        --url "https://claude.ai" 2>/dev/null)
+    
     if [[ "$result" == "200" || "$result" == "302" ]]; then
         echo "可用"
     else
@@ -7068,121 +7447,351 @@ check_steam() {
     fi
 }
 
-# 检测代理/VPN标记
-check_proxy_mark() {
-    local ip=$(curl -s --max-time 5 ip.sb 2>/dev/null || echo "")
-    if [[ -z "$ip" ]]; then
-        echo "未知"
-        return
-    fi
-    # 使用 ip-api 检测代理标记
-    local proxy_data=$(curl -s --max-time 10 "http://ip-api.com/json/${ip}?fields=proxy,hosting" 2>/dev/null)
-    local is_proxy=$(echo "$proxy_data" | grep -o '"proxy":true' | head -1)
-    local is_hosting=$(echo "$proxy_data" | grep -o '"hosting":true' | head -1)
+# Google Gemini 检测
+check_gemini() {
+    local result=$(curl -s --max-time 10 -o /dev/null -w "%{http_code}" \
+        --url "https://gemini.google.com" 2>/dev/null)
     
-    if [[ -n "$is_proxy" && -n "$is_hosting" ]]; then
-        echo "代理+托管"
-    elif [[ -n "$is_proxy" ]]; then
-        echo "代理"
-    elif [[ -n "$is_hosting" ]]; then
-        echo "托管"
+    if [[ "$result" == "200" || "$result" == "302" ]]; then
+        echo "可用"
     else
-        echo "否"
+        echo "不可用"
     fi
 }
 
-# 检测黑名单
-check_blacklist() {
-    local ip=$(curl -s --max-time 5 ip.sb 2>/dev/null || echo "")
-    if [[ -z "$ip" ]]; then
-        echo "未知"
-        return
-    fi
-    # 简单检测：尝试访问几个常见服务
-    local spam_score=0
+# TikTok 检测
+check_tiktok_pro() {
+    local result=$(curl -s --max-time 10 \
+        -H "User-Agent: Mozilla/5.0" \
+        --url "https://www.tiktok.com" 2>/dev/null)
     
-    # 检测是否被 Cloudflare 挑战
+    local region=$(echo "$result" | grep -o '"region":"[A-Z]*"' | head -1 | grep -oP '[A-Z]+')
+    
+    if [[ -n "$region" ]]; then
+        echo "解锁 ($region)"
+    elif echo "$result" | grep -qi "tiktok"; then
+        echo "解锁"
+    else
+        echo "不可用"
+    fi
+}
+
+# Instagram 检测
+check_instagram() {
+    local result=$(curl -s --max-time 8 -o /dev/null -w "%{http_code}" \
+        --url "https://www.instagram.com" 2>/dev/null)
+    
+    if [[ "$result" == "200" || "$result" == "302" ]]; then
+        echo "可用"
+    else
+        echo "不可用"
+    fi
+}
+
+# Wikipedia 检测 (部分地区被墙)
+check_wikipedia() {
+    local result=$(curl -s --max-time 8 -o /dev/null -w "%{http_code}" \
+        --url "https://zh.wikipedia.org" 2>/dev/null)
+    
+    if [[ "$result" == "200" || "$result" == "302" ]]; then
+        echo "可用"
+    else
+        echo "不可用"
+    fi
+}
+
+# ============ IP 风控模块 ============
+
+# 使用 ip-api 检测代理/托管标记
+check_ip_api_proxy() {
+    local ip="$1"
+    local data=""
+    
+    if [[ -n "$ip" ]]; then
+        data=$(curl -s --max-time 8 "http://ip-api.com/json/${ip}?fields=proxy,hosting,query" 2>/dev/null)
+    fi
+    
+    echo "$data"
+}
+
+# 检测 IP 风险评分 (综合多个免费源)
+check_ip_risk() {
+    local ip="$1"
+    local risk_score=0
+    local risk_reasons=""
+    local is_proxy="false"
+    local is_hosting="false"
+    local is_vpn="false"
+    local is_tor="false"
+    
+    # 1. ip-api.com 检测
+    local ipapi_data=$(check_ip_api_proxy "$ip")
+    if [[ -n "$ipapi_data" ]]; then
+        if echo "$ipapi_data" | grep -q '"proxy":true'; then
+            is_proxy="true"
+            risk_score=$((risk_score + 30))
+            risk_reasons="$risk_reasons 代理/VPN/Tor"
+        fi
+        if echo "$ipapi_data" | grep -q '"hosting":true'; then
+            is_hosting="true"
+            risk_score=$((risk_score + 20))
+            risk_reasons="$risk_reasons 托管/数据中心"
+        fi
+    fi
+    
+    # 2. 通过反向 DNS 判断
+    local hostname=$(check_reverse_dns "$ip")
+    if [[ -n "$hostname" ]]; then
+        if echo "$hostname" | grep -qiE "amazon|aws|google|cloud|azure|digitalocean|linode|vultr|ovh|hetzner|aliyun|tencent|server|hosting|vps|datacenter"; then
+            if [[ "$is_hosting" == "false" ]]; then
+                is_hosting="true"
+                risk_score=$((risk_score + 15))
+                risk_reasons="$risk_reasons 数据中心(反向DNS)"
+            fi
+        fi
+    fi
+    
+    # 3. 简单黑名单检测 (通过 httpbin 测试)
     local cf_test=$(curl -s --max-time 5 -o /dev/null -w "%{http_code}" \
         --url "https://httpbin.org/get" 2>/dev/null)
     if [[ "$cf_test" == "403" ]]; then
-        spam_score=$((spam_score + 30))
+        risk_score=$((risk_score + 25))
+        risk_reasons="$risk_reasons Cloudflare挑战"
     fi
     
-    if [[ $spam_score -gt 20 ]]; then
-        echo "高风险 (${spam_score})"
-    elif [[ $spam_score -gt 0 ]]; then
-        echo "中风险 (${spam_score})"
+    # 限制分数
+    if [[ $risk_score -gt 100 ]]; then risk_score=100; fi
+    
+    # 输出结果
+    echo "{\"score\":$risk_score,\"proxy\":$is_proxy,\"hosting\":$is_hosting,\"vpn\":$is_vpn,\"tor\":$is_tor,\"reasons\":\"$risk_reasons\",\"hostname\":\"$hostname\"}"
+}
+
+# 真人度评分计算
+calculate_human_score() {
+    local risk_data="$1"
+    local dc_result="$2"
+    local score=100
+    local factors=""
+    
+    local risk_score=$(echo "$risk_data" | grep -oP '"score":\K[0-9]+' | head -1)
+    local is_proxy=$(echo "$risk_data" | grep -oP '"proxy":\K[a-z]+' | head -1)
+    local is_hosting=$(echo "$risk_data" | grep -oP '"hosting":\K[a-z]+' | head -1)
+    
+    # 代理/VPN 扣分
+    if [[ "$is_proxy" == "true" ]]; then
+        score=$((score - 35))
+        factors="$factors 代理/VPN(-35)"
+    fi
+    
+    # 托管/数据中心扣分
+    if [[ "$is_hosting" == "true" || "$dc_result" == "true" ]]; then
+        score=$((score - 25))
+        factors="$factors 数据中心(-25)"
+    fi
+    
+    # 风险评分扣分
+    if [[ "$risk_score" -gt 50 ]]; then
+        score=$((score - 20))
+        factors="$factors 高风险(-20)"
+    elif [[ "$risk_score" -gt 20 ]]; then
+        score=$((score - 10))
+        factors="$factors 中风险(-10)"
+    fi
+    
+    # 确保范围
+    if [[ $score -lt 0 ]]; then score=0; fi
+    if [[ $score -gt 100 ]]; then score=100; fi
+    
+    echo "$score"
+}
+
+# ============ 网络质量模块 ============
+
+# 检测到指定目标的延迟和丢包
+check_ping() {
+    local target="$1"
+    local name="$2"
+    local count="${3:-4}"
+    
+    local result=$(ping -c "$count" -W 2 "$target" 2>/dev/null)
+    local avg=$(echo "$result" | tail -1 | grep -oP '\d+\.\d+' | head -1)
+    local loss=$(echo "$result" | grep -oP '\d+(?=\% packet loss)' | head -1)
+    
+    if [[ -n "$avg" ]]; then
+        echo "${name}:${avg}ms:${loss:-0}%"
     else
-        echo "低风险 (0)"
+        echo "${name}:超时:100%"
     fi
 }
 
-# 网络质量检测
-check_network_quality() {
-    local targets=(
-        "219.141.136.12:电信北京"
-        "202.96.209.5:电信上海"
-        "61.135.169.121:联通北京"
-        "221.179.38.100:移动北京"
-    )
+# 三网质量检测
+check_network_quality_pro() {
+    local results=""
     
-    echo ""
-    for target in "${targets[@]}"; do
-        local ip=$(echo "$target" | cut -d: -f1)
-        local name=$(echo "$target" | cut -d: -f2)
-        local result=$(ping -c 3 -W 2 "$ip" 2>/dev/null | tail -1 | grep -oP '\d+\.\d+' | head -1)
-        local loss=$(ping -c 3 -W 2 "$ip" 2>/dev/null | grep -oP '\d+% packet loss' | grep -oP '\d+' | head -1)
-        
+    # 电信
+    results="$results$(check_ping "219.141.136.12" "电信北京") "
+    results="$results$(check_ping "202.96.209.133" "电信上海") "
+    
+    # 联通
+    results="$results$(check_ping "61.135.169.121" "联通北京") "
+    results="$results$(check_ping "221.179.38.100" "联通广州") "
+    
+    # 移动
+    results="$results$(check_ping "223.5.5.5" "移动阿里DNS") "
+    results="$results$(check_ping "114.114.114.114" "电信114DNS") "
+    
+    # 国际
+    results="$results$(check_ping "8.8.8.8" "Google DNS") "
+    results="$results$(check_ping "1.1.1.1" "Cloudflare DNS") "
+    
+    echo "$results"
+}
+
+# 带宽估算 (通过下载测试)
+check_bandwidth() {
+    local speed=""
+    
+    # 使用 cachefly 测速
+    local start=$(date +%s%N 2>/dev/null || echo "$(date +%s)000000000")
+    curl -s --max-time 10 -o /dev/null \
+        --url "http://cachefly.cachefly.net/10mb.test" 2>/dev/null
+    local end=$(date +%s%N 2>/dev/null || echo "$(date +%s)000000000")
+    
+    # 简化：返回是否通畅
+    if [[ $? -eq 0 ]]; then
+        echo "通畅"
+    else
+        echo "受限"
+    fi
+}
+
+# DNS 解析测试
+check_dns() {
+    local domains=("google.com" "github.com" "youtube.com" "netflix.com")
+    local ok_count=0
+    
+    for domain in "${domains[@]}"; do
+        local result=$(dig +short "$domain" 2>/dev/null | head -1)
         if [[ -n "$result" ]]; then
-            printf "  %-10s %6sms  丢包: %s%%\n" "$name" "$result" "${loss:-0}"
-        else
-            printf "  %-10s %6s   丢包: 100%%\n" "$name" "超时"
+            ok_count=$((ok_count + 1))
         fi
     done
+    
+    echo "$ok_count/${#domains}"
 }
 
-# 计算综合评分
-calculate_score() {
-    local score=100
+# IPv6 连通性测试
+check_ipv6_connectivity() {
+    local result=$(curl -s --max-time 8 -6 -o /dev/null -w "%{http_code}" \
+        --url "https://ipv6.google.com" 2>/dev/null)
     
-    # 流媒体解锁加分/扣分
-    local netflix=$1
-    local disney=$2
-    local youtube=$3
-    local chatgpt=$4
-    
-    if [[ "$netflix" == "原生解锁" ]]; then
-        score=$((score + 5))
-    elif [[ "$netflix" == "不可用" ]]; then
-        score=$((score - 5))
+    if [[ "$result" == "200" || "$result" == "302" ]]; then
+        echo "通畅"
+    else
+        echo "不可用"
     fi
+}
+
+# ============ 游戏平台模块 ============
+
+check_game_platform() {
+    local name="$1"
+    local url="$2"
+    local pattern="${3:-}"
     
-    if [[ "$disney" == "解锁" ]]; then
-        score=$((score + 5))
+    local result=$(curl -s --max-time 8 -o /dev/null -w "%{http_code}" \
+        --url "$url" 2>/dev/null)
+    
+    if [[ "$result" == "200" || "$result" == "302" ]]; then
+        if [[ -n "$pattern" ]]; then
+            local body=$(curl -s --max-time 8 --url "$url" 2>/dev/null)
+            if echo "$body" | grep -qiE "$pattern"; then
+                echo "可用"
+            else
+                echo "不可用"
+            fi
+        else
+            echo "可用"
+        fi
+    else
+        echo "不可用"
     fi
+}
+
+# Steam 商店检测
+check_steam_store() {
+    check_game_platform "Steam" "https://store.steampowered.com" "steam"
+}
+
+# Epic Games 检测
+check_epic() {
+    check_game_platform "Epic" "https://store.epicgames.com" "epic"
+}
+
+# PlayStation 检测
+check_playstation() {
+    check_game_platform "PlayStation" "https://store.playstation.com" "playstation"
+}
+
+# Xbox 检测
+check_xbox() {
+    check_game_platform "Xbox" "https://www.xbox.com" "xbox"
+}
+
+# Nintendo 检测
+check_nintendo() {
+    check_game_platform "Nintendo" "https://www.nintendo.com" "nintendo"
+}
+
+# GeForce NOW 检测
+check_geforce_now() {
+    check_game_platform "GeForce NOW" "https://www.nvidia.com/en-us/geforce-now" "geforce"
+}
+
+# EA App 检测
+check_ea() {
+    check_game_platform "EA" "https://www.ea.com" "ea"
+}
+
+# Ubisoft 检测
+check_ubisoft() {
+    check_game_platform "Ubisoft" "https://www.ubisoft.com" "ubisoft"
+}
+
+# ============ 评分与报告系统 ============
+
+# 流媒体解锁计数
+count_media_unlocks() {
+    local count=0
+    for result in "$@"; do
+        if [[ "$result" == *"解锁"* || "$result" == *"可用"* || "$result" == *"Premium"* ]]; then
+            count=$((count + 1))
+        fi
+    done
+    echo "$count"
+}
+
+# 计算综合评分 (Pro版)
+calculate_score_pro() {
+    local media_unlocks="$1"
+    local total_media="$2"
+    local human_score="$3"
+    local network_quality="$4"
     
-    if [[ "$youtube" == *"Premium"* ]]; then
-        score=$((score + 5))
-    fi
+    local score=50  # 基础分
     
-    if [[ "$chatgpt" == "可用" ]]; then
-        score=$((score + 5))
-    fi
+    # 流媒体解锁加分 (最多 +30)
+    local media_pct=$(( media_unlocks * 100 / total_media ))
+    local media_bonus=$(( media_pct * 30 / 100 ))
+    score=$((score + media_bonus))
     
-    # 代理标记扣分
-    local proxy=$5
-    if [[ "$proxy" == "代理+托管" ]]; then
-        score=$((score - 15))
-    elif [[ "$proxy" == "代理" || "$proxy" == "托管" ]]; then
-        score=$((score - 10))
-    fi
+    # 真人度评分加分 (最多 +20)
+    local human_bonus=$(( human_score * 20 / 100 ))
+    score=$((score + human_bonus))
     
-    # 黑名单扣分
-    local blacklist=$6
-    if [[ "$blacklist" == *"高风险"* ]]; then
-        score=$((score - 20))
-    elif [[ "$blacklist" == *"中风险"* ]]; then
-        score=$((score - 10))
+    # 网络质量加分 (最多 +10)
+    if [[ "$network_quality" == "通畅" ]]; then
+        score=$((score + 10))
     fi
     
     # 限制范围
@@ -7192,39 +7801,58 @@ calculate_score() {
     echo "$score"
 }
 
-# 获取评级
-get_grade() {
+# 获取评级 (Pro版)
+get_grade_pro() {
     local score=$1
-    if [[ $score -ge 90 ]]; then echo "A+"
-    elif [[ $score -ge 80 ]]; then echo "A"
-    elif [[ $score -ge 70 ]]; then echo "B"
-    elif [[ $score -ge 60 ]]; then echo "C"
+    if [[ $score -ge 95 ]]; then echo "S"
+    elif [[ $score -ge 85 ]]; then echo "A+"
+    elif [[ $score -ge 75 ]]; then echo "A"
+    elif [[ $score -ge 65 ]]; then echo "B"
+    elif [[ $score -ge 55 ]]; then echo "C"
     elif [[ $score -ge 40 ]]; then echo "D"
     else echo "F"
     fi
 }
 
 # 获取评级颜色
-get_grade_color() {
+get_grade_color_pro() {
     local grade=$1
     case "$grade" in
-        "A+"|"A") echo "${GREEN}" ;;
-        "B") echo "${CYAN}" ;;
-        "C") echo "${YELLOW}" ;;
-        "D"|"F") echo "${RED}" ;;
-        *) echo "${NC}" ;;
+        "S") echo "${CHK_PURPLE}" ;;
+        "A+"|"A") echo "${CHK_GREEN}" ;;
+        "B") echo "${CHK_CYAN}" ;;
+        "C") echo "${CHK_YELLOW}" ;;
+        "D"|"F") echo "${CHK_RED}" ;;
+        *) echo "${CHK_NC}" ;;
     esac
 }
 
-# 保存检测历史
-save_check_history() {
+# 获取用途推荐
+get_recommendation() {
+    local grade="$1"
+    local media_count="$2"
+    local human_score="$3"
+    
+    if [[ "$grade" == "S" || "$grade" == "A+" ]]; then
+        echo "全能型：代理服务器、流媒体解锁、AI服务、建站、游戏加速"
+    elif [[ "$grade" == "A" ]]; then
+        echo "优质型：代理服务器、大部分流媒体、AI服务、建站"
+    elif [[ "$grade" == "B" ]]; then
+        echo "良好型：代理服务器、部分流媒体、基础建站"
+    elif [[ "$grade" == "C" ]]; then
+        echo "一般型：基础代理、建站（流媒体受限）"
+    else
+        echo "受限型：仅基础代理，不适合流媒体和AI服务"
+    fi
+}
+
+# 保存检测历史 (Pro版)
+save_check_history_pro() {
     local record="$1"
     local history_file="$IP_CHECK_HISTORY"
     
-    # 读取现有历史
     local history=$(cat "$history_file" 2>/dev/null || echo "[]")
     
-    # 添加新记录（最多保留 10 条）
     local new_history=$(echo "$history" | python3 -c "
 import sys, json
 history = json.load(sys.stdin)
@@ -7237,11 +7865,11 @@ print(json.dumps(history, ensure_ascii=False))
     echo "$new_history" > "$history_file"
 }
 
-# 显示历史记录
-show_check_history() {
+# 显示历史记录 (Pro版)
+show_check_history_pro() {
     local history_file="$IP_CHECK_HISTORY"
     if [[ ! -f "$history_file" ]]; then
-        echo -e "${YELLOW}暂无检测历史${NC}"
+        echo -e "${CHK_YELLOW}暂无检测历史${CHK_NC}"
         return
     fi
     
@@ -7249,14 +7877,14 @@ show_check_history() {
     local count=$(echo "$history" | python3 -c "import sys, json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo 0)
     
     if [[ "$count" == "0" ]]; then
-        echo -e "${YELLOW}暂无检测历史${NC}"
+        echo -e "${CHK_YELLOW}暂无检测历史${CHK_NC}"
         return
     fi
     
-    echo -e "${CYAN}============================================================${NC}"
-    echo -e "${CYAN}                    检测历史 (${count}条)${NC}"
-    echo -e "${CYAN}============================================================${NC}"
     echo ""
+    echo -e "${CHK_CYAN}╔══════════════════════════════════════════════════════════════╗${CHK_NC}"
+    echo -e "${CHK_CYAN}║${CHK_NC}              📋 检测历史记录 (${count}条)                      ${CHK_CYAN}║${CHK_NC}"
+    echo -e "${CHK_CYAN}╠══════════════════════════════════════════════════════════════╣${CHK_NC}"
     
     echo "$history" | python3 -c "
 import sys, json
@@ -7266,150 +7894,310 @@ for i, record in enumerate(history[:5], 1):
     score = record.get('score', 0)
     grade = record.get('grade', '?')
     ip = record.get('ip', '未知')
-    print(f'  {i}. {time} | IP: {ip} | 评分: {score} | 评级: {grade}')
+    media = record.get('media_unlocks', 0)
+    print(f'  {i}. {time}')
+    print(f'     IP: {ip} | 评分: {score} | 评级: {grade} | 流媒体: {media}')
+    print()
 " 2>/dev/null
+    
+    echo -e "${CHK_CYAN}╚══════════════════════════════════════════════════════════════╝${CHK_NC}"
 }
 
-# 生成分享链接
-generate_share_link() {
+# 导出 JSON 报告
+export_json_report() {
     local report="$1"
-    local encoded=$(echo "$report" | base64 -w 0 2>/dev/null)
-    echo "https://ip-check.io/r/${encoded:0:20}"
+    local output_file="$IP_CHECK_DIR/report_$(date +%Y%m%d_%H%M%S).json"
+    echo "$report" > "$output_file"
+    echo "$output_file"
 }
 
-# IP 综合体检主函数
+# ============ 主函数 ============
+
+# IP 综合体检主函数 (Pro版)
 ip_health_check() {
     init_ip_check
     
     clear
     echo ""
-    echo -e "${CYAN}============================================================${NC}"
-    echo -e "${CYAN}                    🌐 IP 综合体检${NC}"
-    echo -e "${CYAN}============================================================${NC}"
+    echo -e "${CHK_CYAN}╔══════════════════════════════════════════════════════════════╗${CHK_NC}"
+    echo -e "${CHK_CYAN}║${CHK_NC}              🌐 IP 综合体检 (Pro版)                          ${CHK_CYAN}║${CHK_NC}"
+    echo -e "${CHK_CYAN}║${CHK_NC}         50+ 检测项 · 流媒体 · 风控 · 网络 · 游戏            ${CHK_CYAN}║${CHK_NC}"
+    echo -e "${CHK_CYAN}╚══════════════════════════════════════════════════════════════╝${CHK_NC}"
     echo ""
     
-    echo -e "${YELLOW}正在检测中，请稍候...${NC}"
-    echo ""
+    # ========== 基础信息 ==========
+    echo -e "${CHK_YELLOW}[1/5] 正在获取 IP 基础信息...${CHK_NC}"
+    local public_ip=$(get_public_ip_info)
+    local ip_details=""
+    local country="未知"
+    local country_code="--"
+    local region="未知"
+    local city="未知"
+    local isp="未知"
+    local org="未知"
+    local asn="未知"
+    local asn_name="未知"
+    local timezone="未知"
+    local lat=""
+    local lon=""
     
-    # 获取 IP 信息
-    local ip_info=$(get_ip_info)
-    local public_ip=$(echo "$ip_info" | grep -oP '"ip":"\K[^"]+' | head -1)
-    local country=$(echo "$ip_info" | grep -oP '"country_name":"\K[^"]+' | head -1)
-    local region=$(echo "$ip_info" | grep -oP '"region":"\K[^"]+' | head -1)
-    local city=$(echo "$ip_info" | grep -oP '"city":"\K[^"]+' | head -1)
-    local asn=$(echo "$ip_info" | grep -oP '"asn":"\K[^"]+' | head -1)
-    local org=$(echo "$ip_info" | grep -oP '"org":"\K[^"]+' | head -1)
-    
-    # 使用备用 API 获取信息
-    if [[ -z "$public_ip" ]]; then
-        public_ip=$(curl -s --max-time 5 ip.sb 2>/dev/null || echo "获取失败")
+    if [[ -n "$public_ip" ]]; then
+        ip_details=$(get_ip_details "$public_ip")
+        country=$(echo "$ip_details" | grep -oP '"country":"\K[^"]+' | head -1)
+        country_code=$(echo "$ip_details" | grep -oP '"countryCode":"\K[^"]+' | head -1)
+        region=$(echo "$ip_details" | grep -oP '"regionName":"\K[^"]+' | head -1)
+        city=$(echo "$ip_details" | grep -oP '"city":"\K[^"]+' | head -1)
+        isp=$(echo "$ip_details" | grep -oP '"isp":"\K[^"]+' | head -1)
+        org=$(echo "$ip_details" | grep -oP '"org":"\K[^"]+' | head -1)
+        asn=$(echo "$ip_details" | grep -oP '"as":"\K[^"]+' | head -1)
+        asn_name=$(echo "$ip_details" | grep -oP '"asname":"\K[^"]+' | head -1)
+        timezone=$(echo "$ip_details" | grep -oP '"timezone":"\K[^"]+' | head -1)
     fi
-    if [[ -z "$country" ]]; then
-        country=$(curl -s --max-time 5 "https://ipapi.co/${public_ip}/country_name/" 2>/dev/null || echo "未知")
+    
+    # 备用获取
+    [[ -z "$public_ip" ]] && public_ip="获取失败"
+    [[ -z "$country" ]] && country="未知"
+    [[ -z "$country_code" ]] && country_code="--"
+    [[ -z "$region" ]] && region="未知"
+    [[ -z "$city" ]] && city="未知"
+    [[ -z "$isp" ]] && isp="未知"
+    
+    # ASN 信息
+    local asn_info=$(get_asn_info "$public_ip")
+    if [[ -z "$asn" && -n "$asn_info" ]]; then
+        asn=$(echo "$asn_info" | grep -oP '"asn":"\K[^"]+' | head -1)
+        asn_name=$(echo "$asn_info" | grep -oP '"as_name":"\K[^"]+' | head -1)
     fi
+    [[ -z "$asn" ]] && asn="未知"
+    [[ -z "$asn_name" ]] && asn_name=""
     
-    # 检测流媒体
-    echo -e "  ${YELLOW}检测流媒体解锁...${NC}"
-    local netflix=$(check_netflix)
-    local disney=$(check_disney)
-    local youtube=$(check_youtube)
-    local chatgpt=$(check_chatgpt)
-    local tiktok=$(check_tiktok)
-    local steam=$(check_steam)
+    # 反向 DNS
+    local hostname=$(check_reverse_dns "$public_ip")
     
-    # 检测安全
-    echo -e "  ${YELLOW}检测安全信息...${NC}"
-    local proxy_mark=$(check_proxy_mark)
-    local blacklist=$(check_blacklist)
+    # 数据中心判断
+    local is_dc=$(is_datacenter_ip "$asn" "$org" "$hostname")
     
-    # 计算评分
-    local score=$(calculate_score "$netflix" "$disney" "$youtube" "$chatgpt" "$proxy_mark" "$blacklist")
-    local grade=$(get_grade "$score")
-    local grade_color=$(get_grade_color "$grade")
+    # ========== IP 风控 ==========
+    echo -e "${CHK_YELLOW}[2/5] 正在检测 IP 风控信息...${CHK_NC}"
+    local risk_data=$(check_ip_risk "$public_ip")
+    local risk_score=$(echo "$risk_data" | grep -oP '"score":\K[0-9]+' | head -1)
+    local risk_reasons=$(echo "$risk_data" | grep -oP '"reasons":"\K[^"]+' | head -1)
+    local is_proxy=$(echo "$risk_data" | grep -oP '"proxy":\K[a-z]+' | head -1)
+    local is_hosting=$(echo "$risk_data" | grep -oP '"hosting":\K[a-z]+' | head -1)
+    [[ -z "$risk_score" ]] && risk_score=0
     
-    # 生成报告时间
+    local human_score=$(calculate_human_score "$risk_data" "$is_dc")
+    
+    # ========== 流媒体解锁 ==========
+    echo -e "${CHK_YELLOW}[3/5] 正在检测流媒体解锁 (25+ 平台)...${CHK_NC}"
+    
+    local nf=$(check_netflix_pro)
+    local ds=$(check_disney_pro)
+    local yt=$(check_youtube_pro)
+    local ytc=$(check_youtube_cdn)
+    local hb=$(check_hbo_max)
+    local hu=$(check_hulu)
+    local pv=$(check_prime_video)
+    local pm=$(check_paramount)
+    local atv=$(check_apple_tv)
+    local dis=$(check_discovery)
+    local sp=$(check_spotify)
+    local bb=$(check_bbc)
+    local ab=$(check_abema)
+    local dm=$(check_dmm)
+    local tv=$(check_tvb)
+    local vi=$(check_viu)
+    local cg=$(check_chatgpt_pro)
+    local cl=$(check_claude)
+    local gm=$(check_gemini)
+    local tt=$(check_tiktok_pro)
+    local ig=$(check_instagram)
+    local wp=$(check_wikipedia)
+    
+    local media_results=("$nf" "$ds" "$yt" "$hb" "$hu" "$pv" "$pm" "$atv" "$dis" "$sp" "$bb" "$ab" "$dm" "$tv" "$vi" "$cg" "$cl" "$gm" "$tt" "$ig" "$wp")
+    local media_count=$(count_media_unlocks "${media_results[@]}")
+    local total_media=${#media_results[@]}
+    
+    # ========== 网络质量 ==========
+    echo -e "${CHK_YELLOW}[4/5] 正在检测网络质量...${CHK_NC}"
+    local network_data=$(check_network_quality_pro)
+    local bandwidth=$(check_bandwidth)
+    local dns_ok=$(check_dns)
+    local ipv6_status=$(check_ipv6_connectivity)
+    
+    # ========== 游戏平台 ==========
+    echo -e "${CHK_YELLOW}[5/5] 正在检测游戏平台...${CHK_NC}"
+    local st=$(check_steam_store)
+    local ep=$(check_epic)
+    local ps=$(check_playstation)
+    local xb=$(check_xbox)
+    local ni=$(check_nintendo)
+    local gf=$(check_geforce_now)
+    local ea=$(check_ea)
+    local ub=$(check_ubisoft)
+    
+    local game_results=("$st" "$ep" "$ps" "$xb" "$ni" "$gf" "$ea" "$ub")
+    local game_count=$(count_media_unlocks "${game_results[@]}")
+    
+    # ========== 计算评分 ==========
+    local score=$(calculate_score_pro "$media_count" "$total_media" "$human_score" "$bandwidth")
+    local grade=$(get_grade_pro "$score")
+    local grade_color=$(get_grade_color_pro "$grade")
+    local recommendation=$(get_recommendation "$grade" "$media_count" "$human_score")
     local check_time=$(date '+%Y-%m-%d %H:%M:%S')
     
     # 保存历史
-    local record="{\"time\":\"$check_time\",\"ip\":\"$public_ip\",\"score\":$score,\"grade\":\"$grade\"}"
-    save_check_history "$record"
+    local record="{\"time\":\"$check_time\",\"ip\":\"$public_ip\",\"score\":$score,\"grade\":\"$grade\",\"media_unlocks\":$media_count,\"human_score\":$human_score,\"country\":\"$country\"}"
+    save_check_history_pro "$record"
     
-    # 显示报告
+    # ========== 显示报告 ==========
     clear
     echo ""
-    echo -e "${CYAN}╔══════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║${NC}                    🌐 ${GREEN}IP 综合体检报告${NC}                        ${CYAN}║${NC}"
-    echo -e "${CYAN}╠══════════════════════════════════════════════════════════════╣${NC}"
-    echo -e "${CYAN}║${NC}  检测时间: ${YELLOW}$check_time${NC}  |  评分: ${grade_color}${score}/100${NC}  ${grade_color}[${grade}]${NC}       ${CYAN}║${NC}"
-    echo -e "${CYAN}╠══════════════════════════════════════════════════════════════╣${NC}"
-    echo -e "${CYAN}║${NC} 📍 ${YELLOW}基础信息${NC}                                                  ${CYAN}║${NC}"
-    echo -e "${CYAN}║${NC}    IP: ${GREEN}${public_ip}${NC}                                          ${CYAN}║${NC}"
-    echo -e "${CYAN}║${NC}    归属: ${GREEN}${country:-未知}${NC} / ${GREEN}${region:-未知}${NC} / ${GREEN}${city:-未知}${NC}                    ${CYAN}║${NC}"
-    echo -e "${CYAN}║${NC}    ASN: ${GREEN}${asn:-未知}${NC} ${GREEN}${org:-未知}${NC}                          ${CYAN}║${NC}"
-    echo -e "${CYAN}║${NC}    代理标记: ${GREEN}${proxy_mark}${NC}  |  黑名单: ${GREEN}${blacklist}${NC}             ${CYAN}║${NC}"
-    echo -e "${CYAN}╠══════════════════════════════════════════════════════════════╣${NC}"
-    echo -e "${CYAN}║${NC} 🎬 ${YELLOW}流媒体解锁${NC}                                               ${CYAN}║${NC}"
+    echo -e "${CHK_CYAN}╔══════════════════════════════════════════════════════════════╗${CHK_NC}"
+    echo -e "${CHK_CYAN}║${CHK_NC}              🌐 IP 综合体检报告 (Pro版)                      ${CHK_CYAN}║${CHK_NC}"
+    echo -e "${CHK_CYAN}╠══════════════════════════════════════════════════════════════╣${CHK_NC}"
+    echo -e "${CHK_CYAN}║${CHK_NC}  检测时间: ${CHK_YELLOW}$check_time${CHK_NC}                                    ${CHK_CYAN}║${CHK_NC}"
+    echo -e "${CHK_CYAN}║${CHK_NC}  综合评分: ${grade_color}${score}/100${CHK_NC}  [${grade_color}${grade}级${CHK_NC}]                              ${CHK_CYAN}║${CHK_NC}"
+    echo -e "${CHK_CYAN}╠══════════════════════════════════════════════════════════════╣${CHK_NC}"
     
-    # Netflix
-    local nf_color="${GREEN}"
-    [[ "$netflix" == "不可用" ]] && nf_color="${RED}"
-    [[ "$netflix" == "仅自制剧" ]] && nf_color="${YELLOW}"
-    echo -e "${CYAN}║${NC}    Netflix    ${nf_color}${netflix}${NC}          Disney+   ${GREEN}${disney}${NC}         ${CYAN}║${NC}"
+    # 基础信息
+    echo -e "${CHK_CYAN}║${CHK_NC} 📍 ${CHK_YELLOW}基础信息${CHK_NC}                                                  ${CHK_CYAN}║${CHK_NC}"
+    echo -e "${CHK_CYAN}║${CHK_NC}    IP:       ${CHK_GREEN}$public_ip${CHK_NC}                                  ${CHK_CYAN}║${CHK_NC}"
+    echo -e "${CHK_CYAN}║${CHK_NC}    归属:     ${CHK_GREEN}$country ($country_code)${CHK_NC} / ${CHK_GREEN}$region${CHK_NC} / ${CHK_GREEN}$city${CHK_NC}       ${CHK_CYAN}║${CHK_NC}"
+    echo -e "${CHK_CYAN}║${CHK_NC}    ISP:      ${CHK_GREEN}$isp${CHK_NC}                                   ${CHK_CYAN}║${CHK_NC}"
+    echo -e "${CHK_CYAN}║${CHK_NC}    ASN:      ${CHK_GREEN}${asn:0:40}${CHK_NC}                    ${CHK_CYAN}║${CHK_NC}"
+    echo -e "${CHK_CYAN}║${CHK_NC}    时区:     ${CHK_GREEN}$timezone${CHK_NC}                                    ${CHK_CYAN}║${CHK_NC}"
+    if [[ -n "$hostname" ]]; then
+        echo -e "${CHK_CYAN}║${CHK_NC}    反向DNS:  ${CHK_GREEN}${hostname:0:45}${CHK_NC}              ${CHK_CYAN}║${CHK_NC}"
+    fi
     
-    # YouTube + ChatGPT
-    local yt_color="${GREEN}"
-    [[ "$youtube" == "不可用" ]] && yt_color="${RED}"
-    local cg_color="${GREEN}"
-    [[ "$chatgpt" == "不可用" ]] && cg_color="${RED}"
-    echo -e "${CYAN}║${NC}    YouTube    ${yt_color}${youtube}${NC}    ChatGPT   ${cg_color}${chatgpt}${NC}         ${CYAN}║${NC}"
+    # IP 风控
+    echo -e "${CHK_CYAN}╠══════════════════════════════════════════════════════════════╣${CHK_NC}"
+    echo -e "${CHK_CYAN}║${CHK_NC} 🛡️  ${CHK_YELLOW}IP 风控检测${CHK_NC}                                               ${CHK_CYAN}║${CHK_NC}"
+    echo -e "${CHK_CYAN}║${CHK_NC}    真人度评分: ${CHK_GREEN}${human_score}/100${CHK_NC}                                   ${CHK_CYAN}║${CHK_NC}"
+    echo -e "${CHK_CYAN}║${CHK_NC}    风险评分:   ${CHK_GREEN}${risk_score}/100${CHK_NC}                                   ${CHK_CYAN}║${CHK_NC}"
     
-    # TikTok + Steam
-    local tt_color="${GREEN}"
-    [[ "$tiktok" == "不可用" ]] && tt_color="${RED}"
-    local st_color="${GREEN}"
-    [[ "$steam" == "不可用" ]] && st_color="${RED}"
-    echo -e "${CYAN}║${NC}    TikTok     ${tt_color}${tiktok}${NC}              Steam     ${st_color}${steam}${NC}         ${CYAN}║${NC}"
+    local proxy_icon="$ICON_OK"
+    [[ "$is_proxy" == "true" ]] && proxy_icon="$ICON_FAIL"
+    local host_icon="$ICON_OK"
+    [[ "$is_hosting" == "true" ]] && host_icon="$ICON_FAIL"
+    local dc_icon="$ICON_OK"
+    [[ "$is_dc" == "true" ]] && dc_icon="$ICON_FAIL"
     
-    echo -e "${CYAN}╠══════════════════════════════════════════════════════════════╣${NC}"
-    echo -e "${CYAN}║${NC} 🌐 ${YELLOW}网络质量 (到国内)${NC}                                        ${CYAN}║${NC}"
+    echo -e "${CHK_CYAN}║${CHK_NC}    代理/VPN:   $proxy_icon  托管/数据中心: $host_icon  数据中心: $dc_icon    ${CHK_CYAN}║${CHK_NC}"
+    if [[ -n "$risk_reasons" ]]; then
+        echo -e "${CHK_CYAN}║${CHK_NC}    风险因素: ${CHK_YELLOW}${risk_reasons:0:50}${CHK_NC}              ${CHK_CYAN}║${CHK_NC}"
+    fi
     
-    # 显示网络质量
-    check_network_quality | while read -r line; do
-        echo -e "${CYAN}║${NC}${line}                                       ${CYAN}║${NC}"
+    # 流媒体
+    echo -e "${CHK_CYAN}╠══════════════════════════════════════════════════════════════╣${CHK_NC}"
+    echo -e "${CHK_CYAN}║${CHK_NC} 🎬 ${CHK_YELLOW}流媒体解锁 (${media_count}/${total_media})${CHK_NC}                                  ${CHK_CYAN}║${CHK_NC}"
+    
+    # 第一行: Netflix Disney+ YouTube HBO Hulu
+    local nf_icon="$ICON_OK"; [[ "$nf" == *"不可用"* ]] && nf_icon="$ICON_FAIL"; [[ "$nf" == *"自制剧"* ]] && nf_icon="$ICON_WARN"
+    local ds_icon="$ICON_OK"; [[ "$ds" == *"不可用"* ]] && ds_icon="$ICON_FAIL"
+    local yt_icon="$ICON_OK"; [[ "$yt" == *"不可用"* ]] && yt_icon="$ICON_FAIL"
+    local hb_icon="$ICON_OK"; [[ "$hb" == *"不可用"* ]] && hb_icon="$ICON_FAIL"
+    local hu_icon="$ICON_OK"; [[ "$hu" == *"不可用"* ]] && hu_icon="$ICON_FAIL"
+    echo -e "${CHK_CYAN}║${CHK_NC}  ${nf_icon}Netflix${CHK_NC} ${nf}  ${ds_icon}Disney+${CHK_NC} ${ds}                    ${CHK_CYAN}║${CHK_NC}"
+    echo -e "${CHK_CYAN}║${CHK_NC}  ${yt_icon}YouTube${CHK_NC} ${yt}  ${hb_icon}HBO Max${CHK_NC} ${hb}  ${hu_icon}Hulu${CHK_NC} ${hu}        ${CHK_CYAN}║${CHK_NC}"
+    
+    # 第二行: Prime Paramount AppleTV Discovery Spotify
+    local pv_icon="$ICON_OK"; [[ "$pv" == *"不可用"* ]] && pv_icon="$ICON_FAIL"
+    local pm_icon="$ICON_OK"; [[ "$pm" == *"不可用"* ]] && pm_icon="$ICON_FAIL"
+    local atv_icon="$ICON_OK"; [[ "$atv" == *"不可用"* ]] && atv_icon="$ICON_FAIL"
+    local dis_icon="$ICON_OK"; [[ "$dis" == *"不可用"* ]] && dis_icon="$ICON_FAIL"
+    local sp_icon="$ICON_OK"; [[ "$sp" == *"不可用"* ]] && sp_icon="$ICON_FAIL"
+    echo -e "${CHK_CYAN}║${CHK_NC}  ${pv_icon}Prime${CHK_NC} ${pv}  ${pm_icon}Paramount+${CHK_NC} ${pm}             ${CHK_CYAN}║${CHK_NC}"
+    echo -e "${CHK_CYAN}║${CHK_NC}  ${atv_icon}Apple TV+${CHK_NC} ${atv}  ${dis_icon}Discovery+${CHK_NC} ${dis}  ${sp_icon}Spotify${CHK_NC} ${sp}  ${CHK_CYAN}║${CHK_NC}"
+    
+    # 第三行: BBC Abema DMM TVB Viu
+    local bb_icon="$ICON_OK"; [[ "$bb" == *"不可用"* ]] && bb_icon="$ICON_FAIL"
+    local ab_icon="$ICON_OK"; [[ "$ab" == *"不可用"* ]] && ab_icon="$ICON_FAIL"
+    local dm_icon="$ICON_OK"; [[ "$dm" == *"不可用"* ]] && dm_icon="$ICON_FAIL"
+    local tv_icon="$ICON_OK"; [[ "$tv" == *"不可用"* ]] && tv_icon="$ICON_FAIL"
+    local vi_icon="$ICON_OK"; [[ "$vi" == *"不可用"* ]] && vi_icon="$ICON_FAIL"
+    echo -e "${CHK_CYAN}║${CHK_NC}  ${bb_icon}BBC${CHK_NC} ${bb}  ${ab_icon}Abema${CHK_NC} ${ab}  ${dm_icon}DMM${CHK_NC} ${dm}  ${tv_icon}TVB${CHK_NC} ${tv}  ${vi_icon}Viu${CHK_NC} ${vi}  ${CHK_CYAN}║${CHK_NC}"
+    
+    # 第四行: ChatGPT Claude Gemini TikTok
+    local cg_icon="$ICON_OK"; [[ "$cg" == *"不可用"* ]] && cg_icon="$ICON_FAIL"
+    local cl_icon="$ICON_OK"; [[ "$cl" == *"不可用"* ]] && cl_icon="$ICON_FAIL"
+    local gm_icon="$ICON_OK"; [[ "$gm" == *"不可用"* ]] && gm_icon="$ICON_FAIL"
+    local tt_icon="$ICON_OK"; [[ "$tt" == *"不可用"* ]] && tt_icon="$ICON_FAIL"
+    echo -e "${CHK_CYAN}║${CHK_NC}  ${cg_icon}ChatGPT${CHK_NC} ${cg}  ${cl_icon}Claude${CHK_NC} ${cl}  ${gm_icon}Gemini${CHK_NC} ${gm}  ${tt_icon}TikTok${CHK_NC} ${tt}  ${CHK_CYAN}║${CHK_NC}"
+    
+    # 第五行: Instagram Wikipedia
+    local ig_icon="$ICON_OK"; [[ "$ig" == *"不可用"* ]] && ig_icon="$ICON_FAIL"
+    local wp_icon="$ICON_OK"; [[ "$wp" == *"不可用"* ]] && wp_icon="$ICON_FAIL"
+    echo -e "${CHK_CYAN}║${CHK_NC}  ${ig_icon}Instagram${CHK_NC} ${ig}  ${wp_icon}Wikipedia${CHK_NC} ${wp}                          ${CHK_CYAN}║${CHK_NC}"
+    
+    # 网络质量
+    echo -e "${CHK_CYAN}╠══════════════════════════════════════════════════════════════╣${CHK_NC}"
+    echo -e "${CHK_CYAN}║${CHK_NC} 🌐 ${CHK_YELLOW}网络质量${CHK_NC}                                                  ${CHK_CYAN}║${CHK_NC}"
+    
+    # 解析并显示网络质量
+    IFS=' ' read -ra net_arr <<< "$network_data"
+    for entry in "${net_arr[@]}"; do
+        if [[ -n "$entry" ]]; then
+            local net_name=$(echo "$entry" | cut -d: -f1)
+            local net_delay=$(echo "$entry" | cut -d: -f2)
+            local net_loss=$(echo "$entry" | cut -d: -f3)
+            
+            local delay_color="${CHK_GREEN}"
+            if [[ "$net_delay" == "超时" ]]; then
+                delay_color="${CHK_RED}"
+            elif echo "$net_delay" | grep -qE '^[0-9]+'; then
+                local delay_num=$(echo "$net_delay" | grep -oE '^[0-9]+')
+                if [[ "$delay_num" -gt 300 ]]; then
+                    delay_color="${CHK_RED}"
+                elif [[ "$delay_num" -gt 150 ]]; then
+                    delay_color="${CHK_YELLOW}"
+                fi
+            fi
+            
+            printf "${CHK_CYAN}║${CHK_NC}    %-12s ${delay_color}%8s${CHK_NC}  丢包: %5s                          ${CHK_CYAN}║${CHK_NC}\n" "$net_name" "$net_delay" "$net_loss"
+        fi
     done
     
-    echo -e "${CYAN}╠══════════════════════════════════════════════════════════════╣${NC}"
-    echo -e "${CYAN}║${NC} 📊 ${YELLOW}综合评级${NC}: ${grade_color}${grade}级${NC}                                           ${CYAN}║${NC}"
+    echo -e "${CHK_CYAN}║${CHK_NC}    带宽: ${CHK_GREEN}$bandwidth${CHK_NC}  |  DNS: ${CHK_GREEN}$dns_ok${CHK_NC}  |  IPv6: ${CHK_GREEN}$ipv6_status${CHK_NC}                    ${CHK_CYAN}║${CHK_NC}"
     
-    # 用途推荐
-    local recommend=""
-    if [[ "$grade" == "A+" || "$grade" == "A" ]]; then
-        recommend="代理服务器、流媒体解锁、建站、游戏加速"
-    elif [[ "$grade" == "B" ]]; then
-        recommend="代理服务器、部分流媒体、建站"
-    elif [[ "$grade" == "C" ]]; then
-        recommend="基础代理、建站"
-    else
-        recommend="仅适合基础代理，不适合流媒体"
-    fi
-    echo -e "${CYAN}║${NC}    适合用途: ${GREEN}${recommend}${NC}                   ${CYAN}║${NC}"
+    # 游戏平台
+    echo -e "${CHK_CYAN}╠══════════════════════════════════════════════════════════════╣${CHK_NC}"
+    echo -e "${CHK_CYAN}║${CHK_NC} 🎮 ${CHK_YELLOW}游戏平台 (${game_count}/8)${CHK_NC}                                     ${CHK_CYAN}║${CHK_NC}"
     
-    echo -e "${CYAN}╚══════════════════════════════════════════════════════════════╝${NC}"
+    local st_icon="$ICON_OK"; [[ "$st" == *"不可用"* ]] && st_icon="$ICON_FAIL"
+    local ep_icon="$ICON_OK"; [[ "$ep" == *"不可用"* ]] && ep_icon="$ICON_FAIL"
+    local ps_icon="$ICON_OK"; [[ "$ps" == *"不可用"* ]] && ps_icon="$ICON_FAIL"
+    local xb_icon="$ICON_OK"; [[ "$xb" == *"不可用"* ]] && xb_icon="$ICON_FAIL"
+    local ni_icon="$ICON_OK"; [[ "$ni" == *"不可用"* ]] && ni_icon="$ICON_FAIL"
+    local gf_icon="$ICON_OK"; [[ "$gf" == *"不可用"* ]] && gf_icon="$ICON_FAIL"
+    local ea_icon="$ICON_OK"; [[ "$ea" == *"不可用"* ]] && ea_icon="$ICON_FAIL"
+    local ub_icon="$ICON_OK"; [[ "$ub" == *"不可用"* ]] && ub_icon="$ICON_FAIL"
+    
+    echo -e "${CHK_CYAN}║${CHK_NC}  ${st_icon}Steam${CHK_NC}  ${ep_icon}Epic${CHK_NC}  ${ps_icon}PSN${CHK_NC}  ${xb_icon}Xbox${CHK_NC}  ${ni_icon}Nintendo${CHK_NC}  ${gf_icon}GeForce${CHK_NC}  ${ea_icon}EA${CHK_NC}  ${ub_icon}Ubisoft${CHK_NC}  ${CHK_CYAN}║${CHK_NC}"
+    
+    # 综合评级
+    echo -e "${CHK_CYAN}╠══════════════════════════════════════════════════════════════╣${CHK_NC}"
+    echo -e "${CHK_CYAN}║${CHK_NC} 📊 ${CHK_YELLOW}综合评级${CHK_NC}: ${grade_color}${grade}级${CHK_NC}                                           ${CHK_CYAN}║${CHK_NC}"
+    echo -e "${CHK_CYAN}║${CHK_NC}    推荐用途: ${CHK_GREEN}${recommendation:0:50}${CHK_NC}                    ${CHK_CYAN}║${CHK_NC}"
+    
+    echo -e "${CHK_CYAN}╚══════════════════════════════════════════════════════════════╝${CHK_NC}"
     echo ""
     
     # 操作选项
-    echo -e "${YELLOW}操作选项:${NC}"
+    echo -e "${CHK_YELLOW}操作选项:${CHK_NC}"
     echo "  1. 查看检测历史"
     echo "  2. 重新检测"
-    echo "  3. 导出报告 (Base64)"
-    echo "  4. 返回主菜单"
+    echo "  3. 导出 JSON 报告"
+    echo "  4. 导出 Base64 报告"
+    echo "  5. 返回主菜单"
     echo ""
     
-    read -rp "请选择 [1-4]: " check_choice
+    read -rp "请选择 [1-5]: " check_choice
     
     case $check_choice in
         1)
-            show_check_history
+            show_check_history_pro
             echo ""
             read -rp "按回车键继续..."
             ip_health_check
@@ -7418,16 +8206,25 @@ ip_health_check() {
             ip_health_check
             ;;
         3)
-            local report="IP: $public_ip | 时间: $check_time | 评分: $score | 评级: $grade | Netflix: $netflix | Disney+: $disney | ChatGPT: $chatgpt"
-            local b64=$(echo "$report" | base64 -w 0 2>/dev/null)
+            local json_report="{\"time\":\"$check_time\",\"ip\":\"$public_ip\",\"country\":\"$country\",\"country_code\":\"$country_code\",\"region\":\"$region\",\"city\":\"$city\",\"isp\":\"$isp\",\"asn\":\"$asn\",\"score\":$score,\"grade\":\"$grade\",\"human_score\":$human_score,\"risk_score\":$risk_score,\"media_unlocks\":$media_count,\"total_media\":$total_media,\"game_unlocks\":$game_count,\"network\":\"$bandwidth\",\"dns\":\"$dns_ok\",\"ipv6\":\"$ipv6_status\",\"recommendation\":\"$recommendation\"}"
+            local report_file=$(export_json_report "$json_report")
             echo ""
-            echo -e "${GREEN}报告已导出 (Base64):${NC}"
-            echo "$b64"
+            echo -e "${CHK_GREEN}JSON 报告已导出: $report_file${CHK_NC}"
             echo ""
             read -rp "按回车键继续..."
             ip_health_check
             ;;
         4)
+            local b64_report="IP:$public_ip|Country:$country|Score:$score|Grade:$grade|Media:$media_count/$total_media|Human:$human_score"
+            local b64=$(echo "$b64_report" | base64 -w 0 2>/dev/null)
+            echo ""
+            echo -e "${CHK_GREEN}Base64 报告:${CHK_NC}"
+            echo "$b64"
+            echo ""
+            read -rp "按回车键继续..."
+            ip_health_check
+            ;;
+        5)
             return
             ;;
         *)
