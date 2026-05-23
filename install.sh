@@ -7092,165 +7092,130 @@ is_datacenter_ip() {
     echo "false"
 }
 
-# ============ 流媒体解锁模块 (25+ 平台) ============
-# 参考 MediaUnlockTest / RegionRestrictionCheck 实现
+# ============ 流媒体解锁模块 (基于 RegionRestrictionCheck) ============
+# 使用正确的检测逻辑，不是简单的 HTTP 状态码判断
 
-# 通用流媒体检测函数
-check_media() {
-    local name="$1"
-    local url="$2"
-    local method="$3"      # GET/POST
-    local headers="$4"
-    local check_type="$5"  # status/body/redirect/header
-    local check_pattern="$6"
-    local success_value="$7"
-    local region_pattern="$8"
-    local timeout="${9:-10}"
-    
-    local result=""
-    local region=""
-    local raw=""
-    
-    # 构建 curl 命令
-    local curl_cmd="curl -s --max-time $timeout"
-    [[ "$method" == "POST" ]] && curl_cmd="$curl_cmd -X POST"
-    
-    # 添加 headers
-    if [[ -n "$headers" ]]; then
-        IFS='|' read -ra hdrs <<< "$headers"
-        for h in "${hdrs[@]}"; do
-            curl_cmd="$curl_cmd -H '$h'"
-        done
-    fi
-    
-    case "$check_type" in
-        status)
-            raw=$(eval "$curl_cmd -o /dev/null -w '%{http_code}' --url '$url' 2>/dev/null")
-            if [[ "$raw" == "$success_value" ]]; then
-                result="解锁"
-            else
-                result="不可用"
-            fi
-            ;;
-        body)
-            raw=$(eval "$curl_cmd --url '$url' 2>/dev/null")
-            if echo "$raw" | grep -qiE "$check_pattern"; then
-                result="解锁"
-                if [[ -n "$region_pattern" ]]; then
-                    region=$(echo "$raw" | grep -oP "$region_pattern" | head -1)
-                fi
-            else
-                result="不可用"
-            fi
-            ;;
-        redirect)
-            raw=$(eval "$curl_cmd -o /dev/null -w '%{redirect_url}' --url '$url' 2>/dev/null")
-            if echo "$raw" | grep -qiE "$check_pattern"; then
-                result="解锁"
-                if [[ -n "$region_pattern" ]]; then
-                    region=$(echo "$raw" | grep -oP "$region_pattern" | head -1)
-                fi
-            else
-                result="不可用"
-            fi
-            ;;
-        header)
-            raw=$(eval "$curl_cmd -I --url '$url' 2>/dev/null")
-            if echo "$raw" | grep -qiE "$check_pattern"; then
-                result="解锁"
-            else
-                result="不可用"
-            fi
-            ;;
-    esac
-    
-    if [[ -n "$region" ]]; then
-        echo "$result ($region)"
-    else
-        echo "$result"
-    fi
-}
+# 统一的 User-Agent
+UA_BROWSER="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+UA_MOBILE="Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15"
 
-# Netflix 检测 (原生解锁检测)
+# ---------- Netflix 检测 ----------
+# 原理：访问非自制剧(70143836=复仇者联盟)，200=原生解锁，404=仅自制剧，其他=不可用
 check_netflix_pro() {
-    # 方法：访问 Netflix 自制剧 API，检查返回的地区代码
     local tmpfile=$(mktemp)
-    curl -s --max-time 12 -o "$tmpfile" \
+    local result=$(curl -s --max-time 15 \
         -H "Accept-Language: en-US,en;q=0.9" \
-        -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
-        --url "https://www.netflix.com/title/81280792" 2>/dev/null
+        -H "Accept: text/html,application/xhtml+xml" \
+        -H "User-Agent: $UA_BROWSER" \
+        --url "https://www.netflix.com/title/70143836" 2>/dev/null)
     
-    local http_code=$(curl -s --max-time 12 -o /dev/null -w "%{http_code}" \
-        -H "Accept-Language: en-US,en;q=0.9" \
-        -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
-        --url "https://www.netflix.com/title/81280792" 2>/dev/null)
+    echo "$result" > "$tmpfile"
     
-    rm -f "$tmpfile"
+    # 检查是否包含 "Sorry, Netflix is not available in your country yet"
+    if grep -qi "not available in your country" "$tmpfile" 2>/dev/null; then
+        rm -f "$tmpfile"
+        echo "不可用"
+        return
+    fi
     
-    if [[ "$http_code" == "200" ]]; then
-        # 进一步检测地区
+    # 检查是否包含 "Netflix Site Error" 或访问被阻止
+    if grep -qi "site error\|access denied\|blocked" "$tmpfile" 2>/dev/null; then
+        rm -f "$tmpfile"
+        echo "不可用"
+        return
+    fi
+    
+    # 检查页面内容是否包含视频信息（非自制剧能访问到详情页）
+    if grep -qi "title.*avengers\|video-title\|playback" "$tmpfile" 2>/dev/null; then
+        # 尝试获取地区
         local region=$(curl -s --max-time 10 \
-            -H "Accept-Language: en-US,en;q=0.9" \
-            "https://www.netflix.com/signup/planform" 2>/dev/null | \
+            -H "Accept-Language: en-US" \
+            -H "User-Agent: $UA_BROWSER" \
+            --url "https://www.netflix.com" 2>/dev/null | \
             grep -oP '"country":"\K[A-Z]{2}' | head -1)
+        rm -f "$tmpfile"
         if [[ -n "$region" ]]; then
             echo "原生解锁 ($region)"
         else
             echo "原生解锁"
         fi
+        return
+    fi
+    
+    # 如果能访问但找不到视频信息，可能是自制剧-only
+    local http_code=$(curl -s --max-time 10 -o /dev/null -w "%{http_code}" \
+        -H "User-Agent: $UA_BROWSER" \
+        --url "https://www.netflix.com/title/70143836" 2>/dev/null)
+    
+    rm -f "$tmpfile"
+    
+    if [[ "$http_code" == "200" ]]; then
+        # 能访问但可能只有自制剧
+        echo "仅自制剧"
     elif [[ "$http_code" == "404" || "$http_code" == "403" ]]; then
-        # 404 通常表示只能看自制剧
         echo "仅自制剧"
     else
         echo "不可用"
     fi
 }
 
-# Disney+ 检测
+# ---------- Disney+ 检测 ----------
+# 原理：访问 Disney+，检查是否重定向到登录页或地区选择页
 check_disney_pro() {
-    local result=$(curl -s --max-time 10 -o /dev/null -w "%{http_code}" \
+    local result=$(curl -s --max-time 12 -L \
         -H "Accept-Language: en-US" \
-        -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)" \
+        -H "User-Agent: $UA_BROWSER" \
         --url "https://www.disneyplus.com" 2>/dev/null)
     
-    if [[ "$result" == "200" || "$result" == "302" || "$result" == "307" ]]; then
-        # 检测地区
-        local region=$(curl -s --max-time 10 \
-            -H "Accept-Language: en-US" \
-            --url "https://www.disneyplus.com" 2>/dev/null | \
-            grep -oP '"country":"\K[A-Z]{2}' | head -1)
-        if [[ -n "$region" ]]; then
-            echo "解锁 ($region)"
+    # 检查是否包含地区限制信息
+    if echo "$result" | grep -qi "not available\|unavailable\|region\|country"; then
+        # 进一步检查是否是正常的地区页面
+        if echo "$result" | grep -qi "disney\|login\|signup"; then
+            local region=$(echo "$result" | grep -oP '"country":"\K[A-Z]{2}' | head -1)
+            if [[ -n "$region" ]]; then
+                echo "解锁 ($region)"
+            else
+                echo "解锁"
+            fi
         else
-            echo "解锁"
+            echo "不可用"
+        fi
+    elif echo "$result" | grep -qi "disney"; then
+        echo "解锁"
+    else
+        echo "不可用"
+    fi
+}
+
+# ---------- YouTube Premium 检测 ----------
+# 原理：访问 YouTube Premium 页面，检查是否显示价格和地区
+check_youtube_pro() {
+    local result=$(curl -s --max-time 12 \
+        -H "Accept-Language: en-US" \
+        -H "User-Agent: $UA_BROWSER" \
+        --url "https://www.youtube.com/premium" 2>/dev/null)
+    
+    # 检查是否包含 Premium 相关信息
+    if echo "$result" | grep -qi "premium\|YouTube Premium"; then
+        # 尝试获取地区代码
+        local region=$(echo "$result" | grep -oP 'countryCode":"\K[A-Z]{2}' | head -1)
+        if [[ -z "$region" ]]; then
+            region=$(echo "$result" | grep -oP '"gl":"\K[A-Z]{2}' | head -1)
+        fi
+        if [[ -n "$region" ]]; then
+            echo "Premium ($region)"
+        else
+            echo "Premium"
         fi
     else
         echo "不可用"
     fi
 }
 
-# YouTube Premium 检测
-check_youtube_pro() {
-    local result=$(curl -s --max-time 10 \
-        -H "Accept-Language: en-US" \
-        -H "User-Agent: Mozilla/5.0" \
-        --url "https://www.youtube.com/premium" 2>/dev/null)
-    
-    local region=$(echo "$result" | grep -oP 'countryCode":"\K[A-Z]{2}' | head -1)
-    local is_premium=$(echo "$result" | grep -oP '"key":"premium","value":"\K[^"]+' | head -1)
-    
-    if [[ -n "$region" ]]; then
-        echo "Premium ($region)"
-    elif echo "$result" | grep -qi "premium"; then
-        echo "Premium"
-    else
-        echo "不可用"
-    fi
-}
-
-# YouTube CDN 区域检测
+# ---------- YouTube CDN 区域 ----------
 check_youtube_cdn() {
     local result=$(curl -s --max-time 8 -o /dev/null -w "%{redirect_url}" \
+        -H "User-Agent: $UA_BROWSER" \
         --url "http://www.youtube.com/red" 2>/dev/null)
     local region=$(echo "$result" | grep -oP 'gl=\K[A-Z]{2}' | head -1)
     if [[ -n "$region" ]]; then
@@ -7260,42 +7225,49 @@ check_youtube_cdn() {
     fi
 }
 
-# HBO Max 检测
+# ---------- HBO Max 检测 ----------
 check_hbo_max() {
-    local result=$(curl -s --max-time 10 -o /dev/null -w "%{http_code}" \
-        -H "User-Agent: Mozilla/5.0" \
+    local result=$(curl -s --max-time 10 -L \
+        -H "User-Agent: $UA_BROWSER" \
         --url "https://www.max.com" 2>/dev/null)
     
-    if [[ "$result" == "200" || "$result" == "302" ]]; then
-        echo "解锁"
+    if echo "$result" | grep -qi "max\|hbo\|stream"; then
+        if echo "$result" | grep -qi "not available\|unavailable"; then
+            echo "不可用"
+        else
+            echo "解锁"
+        fi
     else
         echo "不可用"
     fi
 }
 
-# Hulu 检测
+# ---------- Hulu 检测 ----------
 check_hulu() {
-    local result=$(curl -s --max-time 10 \
-        -H "User-Agent: Mozilla/5.0" \
+    local result=$(curl -s --max-time 10 -L \
+        -H "User-Agent: $UA_BROWSER" \
         --url "https://www.hulu.com" 2>/dev/null)
     
-    if echo "$result" | grep -qi "hulu"; then
-        echo "解锁"
+    if echo "$result" | grep -qi "hulu\|watch"; then
+        if echo "$result" | grep -qi "not available\|unavailable\|region"; then
+            echo "不可用"
+        else
+            echo "解锁"
+        fi
     else
         echo "不可用"
     fi
 }
 
-# Amazon Prime Video 检测
+# ---------- Amazon Prime Video 检测 ----------
 check_prime_video() {
-    local result=$(curl -s --max-time 10 -o /dev/null -w "%{http_code}" \
+    local result=$(curl -s --max-time 12 -L \
         -H "Accept-Language: en-US" \
+        -H "User-Agent: $UA_BROWSER" \
         --url "https://www.primevideo.com" 2>/dev/null)
     
-    if [[ "$result" == "200" || "$result" == "302" ]]; then
-        local region=$(curl -s --max-time 8 \
-            --url "https://www.primevideo.com" 2>/dev/null | \
-            grep -oP '"currentTerritory":"\K[A-Z]{2}' | head -1)
+    if echo "$result" | grep -qi "primevideo\|prime video"; then
+        local region=$(echo "$result" | grep -oP '"currentTerritory":"\K[A-Z]{2}' | head -1)
         if [[ -n "$region" ]]; then
             echo "解锁 ($region)"
         else
@@ -7306,45 +7278,49 @@ check_prime_video() {
     fi
 }
 
-# Paramount+ 检测
+# ---------- Paramount+ 检测 ----------
 check_paramount() {
-    local result=$(curl -s --max-time 10 -o /dev/null -w "%{http_code}" \
+    local result=$(curl -s --max-time 10 -L \
+        -H "User-Agent: $UA_BROWSER" \
         --url "https://www.paramountplus.com" 2>/dev/null)
     
-    if [[ "$result" == "200" || "$result" == "302" ]]; then
+    if echo "$result" | grep -qi "paramount\|stream"; then
         echo "解锁"
     else
         echo "不可用"
     fi
 }
 
-# Apple TV+ 检测
+# ---------- Apple TV+ 检测 ----------
 check_apple_tv() {
-    local result=$(curl -s --max-time 10 -o /dev/null -w "%{http_code}" \
+    local result=$(curl -s --max-time 10 -L \
+        -H "User-Agent: $UA_BROWSER" \
         --url "https://tv.apple.com" 2>/dev/null)
     
-    if [[ "$result" == "200" || "$result" == "302" ]]; then
+    if echo "$result" | grep -qi "apple tv\|tv.apple"; then
         echo "解锁"
     else
         echo "不可用"
     fi
 }
 
-# Discovery+ 检测
+# ---------- Discovery+ 检测 ----------
 check_discovery() {
-    local result=$(curl -s --max-time 10 -o /dev/null -w "%{http_code}" \
+    local result=$(curl -s --max-time 10 -L \
+        -H "User-Agent: $UA_BROWSER" \
         --url "https://www.discoveryplus.com" 2>/dev/null)
     
-    if [[ "$result" == "200" || "$result" == "302" ]]; then
+    if echo "$result" | grep -qi "discovery\|stream"; then
         echo "解锁"
     else
         echo "不可用"
     fi
 }
 
-# Spotify 检测
+# ---------- Spotify 检测 ----------
 check_spotify() {
-    local result=$(curl -s --max-time 10 \
+    local result=$(curl -s --max-time 10 -L \
+        -H "User-Agent: $UA_BROWSER" \
         --url "https://www.spotify.com" 2>/dev/null)
     
     if echo "$result" | grep -qi "spotify"; then
@@ -7359,23 +7335,27 @@ check_spotify() {
     fi
 }
 
-# BBC iPlayer 检测
+# ---------- BBC iPlayer 检测 ----------
 check_bbc() {
-    local result=$(curl -s --max-time 10 -o /dev/null -w "%{http_code}" \
-        -H "User-Agent: Mozilla/5.0" \
+    local result=$(curl -s --max-time 10 -L \
+        -H "User-Agent: $UA_BROWSER" \
         --url "https://www.bbc.co.uk/iplayer" 2>/dev/null)
     
-    if [[ "$result" == "200" ]]; then
-        echo "解锁"
+    if echo "$result" | grep -qi "bbc\|iplayer"; then
+        if echo "$result" | grep -qi "not available\|outside the uk"; then
+            echo "不可用"
+        else
+            echo "解锁"
+        fi
     else
         echo "不可用"
     fi
 }
 
-# Abema TV 检测
+# ---------- Abema TV 检测 ----------
 check_abema() {
-    local result=$(curl -s --max-time 10 \
-        -H "User-Agent: Mozilla/5.0" \
+    local result=$(curl -s --max-time 10 -L \
+        -H "User-Agent: $UA_BROWSER" \
         --url "https://abema.tv" 2>/dev/null)
     
     if echo "$result" | grep -qi "abema"; then
@@ -7385,115 +7365,137 @@ check_abema() {
     fi
 }
 
-# DMM 检测
+# ---------- DMM 检测 ----------
 check_dmm() {
-    local result=$(curl -s --max-time 10 -o /dev/null -w "%{http_code}" \
+    local result=$(curl -s --max-time 10 -L \
+        -H "User-Agent: $UA_BROWSER" \
         --url "https://www.dmm.com" 2>/dev/null)
     
-    if [[ "$result" == "200" || "$result" == "302" ]]; then
+    if echo "$result" | grep -qi "dmm"; then
         echo "解锁"
     else
         echo "不可用"
     fi
 }
 
-# TVB 检测
+# ---------- TVB 检测 ----------
 check_tvb() {
-    local result=$(curl -s --max-time 10 -o /dev/null -w "%{http_code}" \
+    local result=$(curl -s --max-time 10 -L \
+        -H "User-Agent: $UA_BROWSER" \
         --url "https://www.mytvsuper.com" 2>/dev/null)
     
-    if [[ "$result" == "200" || "$result" == "302" ]]; then
+    if echo "$result" | grep -qi "mytvsuper\|tvb"; then
         echo "解锁"
     else
         echo "不可用"
     fi
 }
 
-# Viu 检测
+# ---------- Viu 检测 ----------
 check_viu() {
-    local result=$(curl -s --max-time 10 -o /dev/null -w "%{http_code}" \
+    local result=$(curl -s --max-time 10 -L \
+        -H "User-Agent: $UA_BROWSER" \
         --url "https://www.viu.com" 2>/dev/null)
     
-    if [[ "$result" == "200" || "$result" == "302" ]]; then
+    if echo "$result" | grep -qi "viu"; then
         echo "解锁"
     else
         echo "不可用"
     fi
 }
 
-# ChatGPT 检测
+# ---------- ChatGPT 检测 ----------
+# 原理：访问 ChatGPT 登录页，检查是否返回 200 且不是封锁页面
 check_chatgpt_pro() {
-    # 检测 ChatGPT 可用性
-    local result=$(curl -s --max-time 10 -o /dev/null -w "%{http_code}" \
-        -H "User-Agent: Mozilla/5.0" \
+    local result=$(curl -s --max-time 12 -L \
+        -H "User-Agent: $UA_BROWSER" \
         --url "https://chat.openai.com" 2>/dev/null)
     
-    if [[ "$result" == "200" || "$result" == "302" || "$result" == "307" ]]; then
+    # 检查是否被封锁
+    if echo "$result" | grep -qi "not available\|access denied\|blocked\|unsupported country"; then
+        echo "不可用"
+        return
+    fi
+    
+    # 检查是否正常页面
+    if echo "$result" | grep -qi "chatgpt\|openai\|login\|signin"; then
         echo "可用"
     else
         echo "不可用"
     fi
 }
 
-# Claude 检测
+# ---------- Claude 检测 ----------
 check_claude() {
-    local result=$(curl -s --max-time 10 -o /dev/null -w "%{http_code}" \
+    local result=$(curl -s --max-time 10 -L \
+        -H "User-Agent: $UA_BROWSER" \
         --url "https://claude.ai" 2>/dev/null)
     
-    if [[ "$result" == "200" || "$result" == "302" ]]; then
+    if echo "$result" | grep -qi "not available\|unavailable\|region"; then
+        echo "不可用"
+    elif echo "$result" | grep -qi "claude\|anthropic"; then
         echo "可用"
     else
         echo "不可用"
     fi
 }
 
-# Google Gemini 检测
+# ---------- Google Gemini 检测 ----------
 check_gemini() {
-    local result=$(curl -s --max-time 10 -o /dev/null -w "%{http_code}" \
+    local result=$(curl -s --max-time 10 -L \
+        -H "User-Agent: $UA_BROWSER" \
         --url "https://gemini.google.com" 2>/dev/null)
     
-    if [[ "$result" == "200" || "$result" == "302" ]]; then
+    if echo "$result" | grep -qi "not available\|unavailable"; then
+        echo "不可用"
+    elif echo "$result" | grep -qi "gemini\|google"; then
         echo "可用"
     else
         echo "不可用"
     fi
 }
 
-# TikTok 检测
+# ---------- TikTok 检测 ----------
 check_tiktok_pro() {
-    local result=$(curl -s --max-time 10 \
-        -H "User-Agent: Mozilla/5.0" \
+    local result=$(curl -s --max-time 12 -L \
+        -H "User-Agent: $UA_MOBILE" \
         --url "https://www.tiktok.com" 2>/dev/null)
     
-    local region=$(echo "$result" | grep -o '"region":"[A-Z]*"' | head -1 | grep -oP '[A-Z]+')
+    # 检查地区信息
+    local region=$(echo "$result" | grep -oP '"region":"\K[A-Z]{2}' | head -1)
+    if [[ -z "$region" ]]; then
+        region=$(echo "$result" | grep -oP 'region=\K[A-Z]{2}' | head -1)
+    fi
     
     if [[ -n "$region" ]]; then
         echo "解锁 ($region)"
-    elif echo "$result" | grep -qi "tiktok"; then
+    elif echo "$result" | grep -qi "tiktok\|foryou"; then
         echo "解锁"
     else
         echo "不可用"
     fi
 }
 
-# Instagram 检测
+# ---------- Instagram 检测 ----------
 check_instagram() {
-    local result=$(curl -s --max-time 8 -o /dev/null -w "%{http_code}" \
+    local result=$(curl -s --max-time 10 -L \
+        -H "User-Agent: $UA_BROWSER" \
         --url "https://www.instagram.com" 2>/dev/null)
     
-    if [[ "$result" == "200" || "$result" == "302" ]]; then
+    if echo "$result" | grep -qi "instagram\|login"; then
         echo "可用"
     else
         echo "不可用"
     fi
 }
 
-# Wikipedia 检测 (部分地区被墙)
+# ---------- Wikipedia 检测 ----------
 check_wikipedia() {
-    local result=$(curl -s --max-time 8 -o /dev/null -w "%{http_code}" \
+    local result=$(curl -s --max-time 10 -L \
+        -H "User-Agent: $UA_BROWSER" \
         --url "https://zh.wikipedia.org" 2>/dev/null)
     
-    if [[ "$result" == "200" || "$result" == "302" ]]; then
+    if echo "$result" | grep -qi "wikipedia\|维基百科"; then
         echo "可用"
     else
         echo "不可用"
