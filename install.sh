@@ -6856,6 +6856,9 @@ setup_web_server() {
             warn "无效选择"
             ;;
     esac
+    
+    # 恢复 set -e（安全兜底）
+    set -e
 }
 
 # 申请 SSL 证书
@@ -7917,6 +7920,9 @@ export_json_report() {
 
 # IP 综合体检主函数 (Pro版)
 ip_health_check() {
+    # 临时关闭 set -e，避免检测过程中的错误导致整个脚本退出
+    set +e
+    
     init_ip_check
     
     clear
@@ -8202,9 +8208,11 @@ ip_health_check() {
             show_check_history_pro
             echo ""
             read -rp "按回车键继续..."
+            set -e
             ip_health_check
             ;;
         2)
+            set -e
             ip_health_check
             ;;
         3)
@@ -8224,9 +8232,11 @@ ip_health_check() {
             echo "$b64"
             echo ""
             read -rp "按回车键继续..."
+            set -e
             ip_health_check
             ;;
         5)
+            set -e
             return
             ;;
         *)
