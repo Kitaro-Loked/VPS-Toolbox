@@ -10,7 +10,7 @@
 
 # 仓库: https://github.com/Kitaro-Loked/VPS-Toolbox
 
-# 版本: 3.4.0
+# 版本: 3.6.0
 
 # 致谢: 协议安装脚本全部来自 yeahwu/v2ray-wss
 
@@ -9613,6 +9613,18 @@ show_menu() {
 
     echo "    27. 卸载服务"
 
+    echo ""
+
+    echo -e "  ${YELLOW}[容器]${NC}"
+
+    echo "    28. Docker 应用商店"
+
+    echo ""
+
+    echo -e "  ${YELLOW}[备份]${NC}"
+
+    echo "    29. 配置备份与还原"
+
     echo "    0. 退出脚本"
 
     echo ""
@@ -9621,6 +9633,607 @@ show_menu() {
 
     echo ""
 
+}
+
+# ==================== Docker 应用商店 ====================
+
+check_docker_installed() {
+    if command -v docker &>/dev/null && docker info &>/dev/null; then
+        return 0
+    fi
+    return 1
+}
+
+install_docker_engine() {
+    if check_docker_installed; then
+        echo -e "${GREEN}Docker 已安装${NC}"
+        docker --version
+        return 0
+    fi
+    echo -e "${YELLOW}正在安装 Docker...${NC}"
+    if curl -fsSL https://get.docker.com | bash; then
+        systemctl enable docker --now 2>/dev/null || service docker start 2>/dev/null || true
+        echo -e "${GREEN}Docker 安装完成${NC}"
+        docker --version
+    else
+        error "Docker 安装失败"
+    fi
+}
+
+_docker_check_port() {
+    local port="$1"
+    if ss -tlnp 2>/dev/null | grep -q ":${port} "; then
+        return 1
+    fi
+    if netstat -tlnp 2>/dev/null | grep -q ":${port} "; then
+        return 1
+    fi
+    return 0
+}
+
+_docker_get_free_port() {
+    local start="$1"
+    local p="$start"
+    while [[ "$p" -lt 65535 ]]; do
+        if _docker_check_port "$p"; then
+            echo "$p"
+            return 0
+        fi
+        ((p++))
+    done
+    echo ""
+}
+
+deploy_portainer() {
+    if ! check_docker_installed; then
+        echo -e "${YELLOW}Docker 未安装，先执行安装...${NC}"
+        install_docker_engine
+    fi
+    local port=9000
+    if ! _docker_check_port "$port"; then
+        port=$(_docker_get_free_port 9001)
+        if [[ -z "$port" ]]; then
+            error "无法找到可用端口"
+        fi
+        echo -e "${YELLOW}端口 9000 被占用，将使用端口 ${port}${NC}"
+    fi
+    echo -e "${YELLOW}正在部署 Portainer...${NC}"
+    docker volume create portainer_data 2>/dev/null || true
+    docker run -d \
+        --name portainer \
+        --restart always \
+        -p "${port}:9000" \
+        -v /var/run/docker.sock:/var/run/docker.sock \
+        -v portainer_data:/data \
+        portainer/portainer-ce:latest 2>/dev/null || \
+    docker run -d \
+        --name portainer \
+        --restart always \
+        -p "${port}:9000" \
+        -v /var/run/docker.sock:/var/run/docker.sock \
+        -v portainer_data:/data \
+        portainer/portainer-ce:linux-amd64
+    echo -e "${GREEN}Portainer 部署完成!${NC}"
+    echo -e "访问地址: ${CYAN}http://$(get_server_ip):${port}${NC}"
+    echo -e "首次访问需要设置管理员密码"
+}
+
+deploy_nginx_proxy_manager() {
+    if ! check_docker_installed; then
+        echo -e "${YELLOW}Docker 未安装，先执行安装...${NC}"
+        install_docker_engine
+    fi
+    local http_port=80
+    local https_port=443
+    local admin_port=81
+    local use_alt=0
+    if ! _docker_check_port 80 || ! _docker_check_port 443 || ! _docker_check_port 81; then
+        echo -e "${YELLOW}检测到 80/443/81 端口被占用${NC}"
+        http_port=$(_docker_get_free_port 8080)
+        https_port=$(_docker_get_free_port 8443)
+        admin_port=$(_docker_get_free_port 8181)
+        use_alt=1
+        echo -e "${YELLOW}将使用替代端口: HTTP=${http_port}, HTTPS=${https_port}, Admin=${admin_port}${NC}"
+    fi
+    echo -e "${YELLOW}正在部署 Nginx Proxy Manager...${NC}"
+    mkdir -p /opt/npm/{data,letsencrypt} 2>/dev/null
+    docker run -d \
+        --name nginx-proxy-manager \
+        --restart always \
+        -p "${http_port}:80" \
+        -p "${https_port}:443" \
+        -p "${admin_port}:81" \
+        -v /opt/npm/data:/data \
+        -v /opt/npm/letsencrypt:/etc/letsencrypt \
+        jc21/nginx-proxy-manager:latest
+    echo -e "${GREEN}Nginx Proxy Manager 部署完成!${NC}"
+    if [[ "$use_alt" -eq 1 ]]; then
+        echo -e "管理面板: ${CYAN}http://$(get_server_ip):${admin_port}${NC}"
+    else
+        echo -e "管理面板: ${CYAN}http://$(get_server_ip):81${NC}"
+    fi
+    echo -e "默认账号: ${YELLOW}admin@example.com${NC}"
+    echo -e "默认密码: ${YELLOW}changeme${NC}"
+}
+
+deploy_uptime_kuma() {
+    if ! check_docker_installed; then
+        echo -e "${YELLOW}Docker 未安装，先执行安装...${NC}"
+        install_docker_engine
+    fi
+    local port=3001
+    if ! _docker_check_port "$port"; then
+        port=$(_docker_get_free_port 3002)
+        if [[ -z "$port" ]]; then
+            error "无法找到可用端口"
+        fi
+        echo -e "${YELLOW}端口 3001 被占用，将使用端口 ${port}${NC}"
+    fi
+    echo -e "${YELLOW}正在部署 Uptime Kuma...${NC}"
+    mkdir -p /opt/uptime-kuma 2>/dev/null
+    docker run -d \
+        --name uptime-kuma \
+        --restart always \
+        -p "${port}:3001" \
+        -v /opt/uptime-kuma:/app/data \
+        louislam/uptime-kuma:latest
+    echo -e "${GREEN}Uptime Kuma 部署完成!${NC}"
+    echo -e "访问地址: ${CYAN}http://$(get_server_ip):${port}${NC}"
+    echo -e "首次访问需要创建管理员账号"
+}
+
+deploy_watchtower() {
+    if ! check_docker_installed; then
+        echo -e "${YELLOW}Docker 未安装，先执行安装...${NC}"
+        install_docker_engine
+    fi
+    echo -e "${YELLOW}正在部署 Watchtower (容器自动更新)...${NC}"
+    docker run -d \
+        --name watchtower \
+        --restart always \
+        -v /var/run/docker.sock:/var/run/docker.sock \
+        containrrr/watchtower:latest \
+        --cleanup --schedule "0 0 4 * * *"
+    echo -e "${GREEN}Watchtower 部署完成!${NC}"
+    echo -e "每天 04:00 自动检查并更新所有容器"
+}
+
+deploy_adguard_home() {
+    if ! check_docker_installed; then
+        echo -e "${YELLOW}Docker 未安装，先执行安装...${NC}"
+        install_docker_engine
+    fi
+    local port=3000
+    local dns_port=53
+    if ! _docker_check_port "$port"; then
+        port=$(_docker_get_free_port 3002)
+        if [[ -z "$port" ]]; then
+            error "无法找到可用端口"
+        fi
+        echo -e "${YELLOW}端口 3000 被占用，管理面板将使用端口 ${port}${NC}"
+    fi
+    echo -e "${YELLOW}正在部署 AdGuard Home...${NC}"
+    mkdir -p /opt/adguardhome/{work,conf} 2>/dev/null
+    docker run -d \
+        --name adguardhome \
+        --restart always \
+        -p "${port}:3000" \
+        -p "53:53/tcp" \
+        -p "53:53/udp" \
+        -p "853:853/tcp" \
+        -v /opt/adguardhome/work:/opt/adguardhome/work \
+        -v /opt/adguardhome/conf:/opt/adguardhome/conf \
+        adguard/adguardhome:latest
+    echo -e "${GREEN}AdGuard Home 部署完成!${NC}"
+    echo -e "管理面板: ${CYAN}http://$(get_server_ip):${port}${NC}"
+    echo -e "DNS 端口: ${CYAN}53${NC}"
+}
+
+deploy_nextcloud() {
+    if ! check_docker_installed; then
+        echo -e "${YELLOW}Docker 未安装，先执行安装...${NC}"
+        install_docker_engine
+    fi
+    local port=8080
+    if ! _docker_check_port "$port"; then
+        port=$(_docker_get_free_port 8081)
+        if [[ -z "$port" ]]; then
+            error "无法找到可用端口"
+        fi
+        echo -e "${YELLOW}端口 8080 被占用，将使用端口 ${port}${NC}"
+    fi
+    echo -e "${YELLOW}正在部署 Nextcloud...${NC}"
+    mkdir -p /opt/nextcloud 2>/dev/null
+    docker run -d \
+        --name nextcloud \
+        --restart always \
+        -p "${port}:80" \
+        -v /opt/nextcloud:/var/www/html \
+        nextcloud:latest
+    echo -e "${GREEN}Nextcloud 部署完成!${NC}"
+    echo -e "访问地址: ${CYAN}http://$(get_server_ip):${port}${NC}"
+    echo -e "首次访问需要创建管理员账号"
+}
+
+deploy_alist() {
+    if ! check_docker_installed; then
+        echo -e "${YELLOW}Docker 未安装，先执行安装...${NC}"
+        install_docker_engine
+    fi
+    local port=5244
+    if ! _docker_check_port "$port"; then
+        port=$(_docker_get_free_port 5245)
+        if [[ -z "$port" ]]; then
+            error "无法找到可用端口"
+        fi
+        echo -e "${YELLOW}端口 5244 被占用，将使用端口 ${port}${NC}"
+    fi
+    echo -e "${YELLOW}正在部署 Alist...${NC}"
+    mkdir -p /opt/alist 2>/dev/null
+    docker run -d \
+        --name alist \
+        --restart always \
+        -p "${port}:5244" \
+        -v /opt/alist:/opt/alist/data \
+        xhofe/alist:latest
+    echo -e "${GREEN}Alist 部署完成!${NC}"
+    echo -e "访问地址: ${CYAN}http://$(get_server_ip):${port}${NC}"
+    echo -e "默认账号: ${YELLOW}admin${NC}"
+    echo -e "默认密码: ${YELLOW}从容器日志获取${NC}"
+    echo -e "获取密码命令: ${CYAN}docker logs alist | grep password${NC}"
+}
+
+docker_container_mgmt() {
+    if ! check_docker_installed; then
+        warn "Docker 未安装"
+        return
+    fi
+    clear
+    echo ""
+    echo -e "${CYAN}============================================================${NC}"
+    echo -e "${CYAN}                    Docker 容器管理${NC}"
+    echo -e "${CYAN}============================================================${NC}"
+    echo ""
+    echo "  1. 查看运行中的容器"
+    echo "  2. 查看所有容器"
+    echo "  3. 启动容器"
+    echo "  4. 停止容器"
+    echo "  5. 重启容器"
+    echo "  6. 删除容器"
+    echo "  7. 查看容器日志"
+    echo "  8. 清理未使用的镜像/卷/网络"
+    echo "  9. 返回"
+    echo ""
+    echo -e "${CYAN}============================================================${NC}"
+    echo ""
+    read -rp "请选择 [1-9]: " cm_choice
+    case $cm_choice in
+        1)
+            echo ""
+            docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}"
+            ;;
+        2)
+            echo ""
+            docker ps -a --format "table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}"
+            ;;
+        3)
+            read -rp "请输入容器名称: " cname
+            [[ -n "$cname" ]] && docker start "$cname"
+            ;;
+        4)
+            read -rp "请输入容器名称: " cname
+            [[ -n "$cname" ]] && docker stop "$cname"
+            ;;
+        5)
+            read -rp "请输入容器名称: " cname
+            [[ -n "$cname" ]] && docker restart "$cname"
+            ;;
+        6)
+            read -rp "请输入容器名称: " cname
+            if [[ -n "$cname" ]]; then
+                read -rp "确认删除? 输入 y: " cfm
+                [[ "$cfm" == "y" ]] && docker rm -f "$cname"
+            fi
+            ;;
+        7)
+            read -rp "请输入容器名称: " cname
+            [[ -n "$cname" ]] && docker logs --tail 50 "$cname"
+            ;;
+        8)
+            echo -e "${YELLOW}正在清理...${NC}"
+            docker system prune -f
+            docker volume prune -f
+            echo -e "${GREEN}清理完成${NC}"
+            ;;
+        9) return ;;
+        *) warn "无效选择" ;;
+    esac
+    echo ""
+    read -rp "按回车键继续..."
+}
+
+docker_manager() {
+    clear
+    echo ""
+    echo -e "${CYAN}============================================================${NC}"
+    echo -e "${CYAN}                    Docker 应用商店${NC}"
+    echo -e "${CYAN}============================================================${NC}"
+    echo ""
+    if check_docker_installed; then
+        echo -e "${GREEN}Docker 状态: 已安装${NC}"
+        docker --version 2>/dev/null
+    else
+        echo -e "${YELLOW}Docker 状态: 未安装${NC}"
+    fi
+    echo ""
+    echo -e "${YELLOW}环境:${NC}"
+    echo "    1. 安装/更新 Docker 环境"
+    echo ""
+    echo -e "${YELLOW}常用应用:${NC}"
+    echo "    2. Portainer (Docker 可视化管理)"
+    echo "    3. Nginx Proxy Manager (反向代理+SSL)"
+    echo "    4. Uptime Kuma (服务监控)"
+    echo "    5. Watchtower (容器自动更新)"
+    echo "    6. AdGuard Home (DNS 去广告)"
+    echo "    7. Nextcloud (私有网盘)"
+    echo "    8. Alist (多网盘聚合)"
+    echo ""
+    echo -e "${YELLOW}管理:${NC}"
+    echo "    9. 容器管理"
+    echo "    10. 返回主菜单"
+    echo ""
+    echo -e "${CYAN}============================================================${NC}"
+    echo ""
+    read -rp "请选择 [1-10]: " dk_choice
+    case $dk_choice in
+        1) install_docker_engine ;;
+        2) deploy_portainer ;;
+        3) deploy_nginx_proxy_manager ;;
+        4) deploy_uptime_kuma ;;
+        5) deploy_watchtower ;;
+        6) deploy_adguard_home ;;
+        7) deploy_nextcloud ;;
+        8) deploy_alist ;;
+        9) docker_container_mgmt ;;
+        10) return ;;
+        *) warn "无效选择" ;;
+    esac
+    echo ""
+    read -rp "按回车键继续..."
+}
+
+# ==================== 配置备份与还原 ====================
+
+BACKUP_DIR="/etc/vps-toolbox/backups"
+
+_init_backup_dir() {
+    [[ -d "$BACKUP_DIR" ]] || mkdir -p "$BACKUP_DIR"
+}
+
+create_backup() {
+    _init_backup_dir
+    echo ""
+    echo -e "${YELLOW}正在扫描需要备份的配置...${NC}"
+    local ts
+    ts=$(date +%Y%m%d_%H%M%S)
+    local tmp_list="/tmp/vps-toolbox-backup-${ts}.list"
+    : > "$tmp_list"
+    local items=()
+    [[ -d "/etc/vps-toolbox" ]] && items+=("/etc/vps-toolbox")
+    [[ -d "/etc/nginx/conf.d" ]] && items+=("/etc/nginx/conf.d")
+    [[ -f "/etc/nginx/nginx.conf" ]] && items+=("/etc/nginx/nginx.conf")
+    [[ -d "/etc/caddy" ]] && items+=("/etc/caddy")
+    [[ -d "/var/www/vps-toolbox-site" ]] && items+=("/var/www/vps-toolbox-site")
+    [[ -d "/etc/systemd/system" ]] && {
+        find /etc/systemd/system -maxdepth 1 -name "vps-toolbox-*" >> "$tmp_list" 2>/dev/null
+    }
+    [[ -d "/etc/letsencrypt" ]] && items+=("/etc/letsencrypt")
+    [[ -d "/root/.local/share/caddy" ]] && items+=("/root/.local/share/caddy")
+    [[ -f "/etc/crontab" ]] && items+=("/etc/crontab")
+    [[ -d "/etc/cron.d" ]] && {
+        find /etc/cron.d -maxdepth 1 -name "*vps*" >> "$tmp_list" 2>/dev/null
+    }
+    for item in "${items[@]}"; do
+        echo "$item" >> "$tmp_list"
+    done
+    local file_count
+    file_count=$(wc -l < "$tmp_list" | tr -d ' ')
+    if [[ "$file_count" -eq 0 ]]; then
+        echo -e "${YELLOW}没有找到可备份的配置${NC}"
+        rm -f "$tmp_list"
+        return
+    fi
+    echo -e "发现 ${GREEN}${file_count}${NC} 项配置"
+    echo ""
+    read -rp "是否设置加密密码? (直接回车不加密): " bk_pwd
+    local backup_file="${BACKUP_DIR}/vps-toolbox-backup-${ts}.tar.gz"
+    echo -e "${YELLOW}正在打包备份...${NC}"
+    if tar czf "$backup_file" -T "$tmp_list" 2>/dev/null; then
+        rm -f "$tmp_list"
+        if [[ -n "$bk_pwd" ]]; then
+            local enc_file="${backup_file}.enc"
+            if openssl enc -aes-256-cbc -salt -in "$backup_file" -out "$enc_file" -k "$bk_pwd" 2>/dev/null; then
+                rm -f "$backup_file"
+                backup_file="$enc_file"
+                echo -e "${GREEN}加密备份完成!${NC}"
+            else
+                echo -e "${YELLOW}加密失败，保留未加密备份${NC}"
+            fi
+        else
+            echo -e "${GREEN}备份完成!${NC}"
+        fi
+        local size
+        size=$(du -h "$backup_file" 2>/dev/null | cut -f1)
+        echo -e "备份文件: ${CYAN}${backup_file}${NC}"
+        echo -e "文件大小: ${CYAN}${size}${NC}"
+        ls -t "${BACKUP_DIR}"/*.tar.gz* 2>/dev/null | tail -n +11 | xargs -r rm -f
+    else
+        rm -f "$tmp_list"
+        error "备份打包失败"
+    fi
+}
+
+restore_backup() {
+    _init_backup_dir
+    local backups=()
+    while IFS= read -r line; do
+        backups+=("$line")
+    done < <(ls -t "${BACKUP_DIR}"/*.tar.gz* 2>/dev/null)
+    if [[ ${#backups[@]} -eq 0 ]]; then
+        echo -e "${YELLOW}没有找到备份文件${NC}"
+        return
+    fi
+    echo ""
+    echo -e "${YELLOW}可用的备份文件:${NC}"
+    local i=1
+    for bk in "${backups[@]}"; do
+        local sz
+        sz=$(du -h "$bk" 2>/dev/null | cut -f1)
+        local name
+        name=$(basename "$bk")
+        echo "  ${i}. ${name} (${sz})"
+        ((i++))
+    done
+    echo ""
+    read -rp "请选择要还原的备份编号 (0取消): " bk_idx
+    if [[ -z "$bk_idx" ]] || [[ "$bk_idx" == "0" ]]; then
+        return
+    fi
+    if ! [[ "$bk_idx" =~ ^[0-9]+$ ]] || [[ "$bk_idx" -lt 1 ]] || [[ "$bk_idx" -gt ${#backups[@]} ]]; then
+        warn "无效选择"
+        return
+    fi
+    local selected
+    selected="${backups[$((bk_idx-1))]}"
+    local is_enc=0
+    if [[ "$selected" == *.enc ]]; then
+        is_enc=1
+        read -rsp "请输入解密密码: " dec_pwd
+        echo ""
+        local dec_file="${selected%.enc}.tmp"
+        if ! openssl enc -aes-256-cbc -d -in "$selected" -out "$dec_file" -k "$dec_pwd" 2>/dev/null; then
+            rm -f "$dec_file"
+            error "解密失败，密码错误"
+        fi
+        selected="$dec_file"
+    fi
+    echo ""
+    echo -e "${RED}警告: 还原将覆盖现有配置!${NC}"
+    read -rp "确认还原? 输入 [确认还原] 继续: " cfm
+    if [[ "$cfm" != "确认还原" ]]; then
+        [[ "$is_enc" -eq 1 ]] && rm -f "$selected"
+        echo -e "${YELLOW}已取消${NC}"
+        return
+    fi
+    echo -e "${YELLOW}正在还原...${NC}"
+    systemctl stop vps-toolbox-bot 2>/dev/null || true
+    systemctl stop vps-toolbox-sub-http 2>/dev/null || true
+    systemctl stop vps-toolbox-ddns 2>/dev/null || true
+    systemctl stop nginx 2>/dev/null || true
+    systemctl stop caddy 2>/dev/null || true
+    if tar xzf "$selected" -C / 2>/dev/null; then
+        echo -e "${GREEN}还原完成!${NC}"
+        echo -e "${YELLOW}正在重启相关服务...${NC}"
+        systemctl daemon-reload 2>/dev/null || true
+        systemctl restart nginx 2>/dev/null || true
+        systemctl restart caddy 2>/dev/null || true
+        systemctl restart vps-toolbox-bot 2>/dev/null || true
+        systemctl restart vps-toolbox-sub-http 2>/dev/null || true
+        systemctl restart vps-toolbox-ddns 2>/dev/null || true
+        echo -e "${GREEN}服务已重启${NC}"
+    else
+        error "还原失败"
+    fi
+    [[ "$is_enc" -eq 1 ]] && rm -f "$selected"
+}
+
+list_backups() {
+    _init_backup_dir
+    local backups=()
+    while IFS= read -r line; do
+        backups+=("$line")
+    done < <(ls -t "${BACKUP_DIR}"/*.tar.gz* 2>/dev/null)
+    if [[ ${#backups[@]} -eq 0 ]]; then
+        echo -e "${YELLOW}没有备份文件${NC}"
+        return
+    fi
+    echo ""
+    echo -e "${CYAN}备份列表:${NC}"
+    local i=1
+    for bk in "${backups[@]}"; do
+        local sz
+        sz=$(du -h "$bk" 2>/dev/null | cut -f1)
+        local name
+        name=$(basename "$bk")
+        local enc_mark=""
+        [[ "$name" == *.enc ]] && enc_mark=" [已加密]"
+        echo "  ${i}. ${name} (${sz})${enc_mark}"
+        ((i++))
+    done
+}
+
+delete_backup() {
+    _init_backup_dir
+    local backups=()
+    while IFS= read -r line; do
+        backups+=("$line")
+    done < <(ls -t "${BACKUP_DIR}"/*.tar.gz* 2>/dev/null)
+    if [[ ${#backups[@]} -eq 0 ]]; then
+        echo -e "${YELLOW}没有备份文件${NC}"
+        return
+    fi
+    list_backups
+    echo ""
+    read -rp "请输入要删除的备份编号 (0取消, all删除全部): " bk_idx
+    if [[ -z "$bk_idx" ]] || [[ "$bk_idx" == "0" ]]; then
+        return
+    fi
+    if [[ "$bk_idx" == "all" ]]; then
+        read -rp "确认删除所有备份? 输入 y: " cfm
+        if [[ "$cfm" == "y" ]]; then
+            rm -f "${BACKUP_DIR}"/*.tar.gz*
+            echo -e "${GREEN}所有备份已删除${NC}"
+        fi
+        return
+    fi
+    if ! [[ "$bk_idx" =~ ^[0-9]+$ ]] || [[ "$bk_idx" -lt 1 ]] || [[ "$bk_idx" -gt ${#backups[@]} ]]; then
+        warn "无效选择"
+        return
+    fi
+    local selected
+    selected="${backups[$((bk_idx-1))]}"
+    rm -f "$selected"
+    echo -e "${GREEN}已删除: $(basename "$selected")${NC}"
+}
+
+backup_manager() {
+    while true; do
+        clear
+        echo ""
+        echo -e "${CYAN}============================================================${NC}"
+        echo -e "${CYAN}                    配置备份与还原${NC}"
+        echo -e "${CYAN}============================================================${NC}"
+        echo ""
+        echo "  1. 创建备份"
+        echo "  2. 还原备份"
+        echo "  3. 查看备份列表"
+        echo "  4. 删除备份"
+        echo "  5. 返回主菜单"
+        echo ""
+        echo -e "${CYAN}============================================================${NC}"
+        echo ""
+        read -rp "请选择 [1-5]: " bu_choice
+        case $bu_choice in
+            1) create_backup ;;
+            2) restore_backup ;;
+            3) list_backups ;;
+            4) delete_backup ;;
+            5) return ;;
+            *) warn "无效选择" ;;
+        esac
+        echo ""
+        read -rp "按回车键继续..."
+    done
 }
 
 main() {
@@ -9647,7 +10260,7 @@ main() {
 
         show_menu
 
-        read -rp "请选择操作 [0-27]: " choice
+        read -rp "请选择操作 [0-29]: " choice
 
         
 
@@ -9706,6 +10319,10 @@ main() {
             26) ip_health_check ;;
 
             27) uninstall_service ;;
+
+            28) docker_manager ;;
+
+            29) backup_manager ;;
 
             0)
 
