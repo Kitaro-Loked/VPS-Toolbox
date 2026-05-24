@@ -5741,13 +5741,36 @@ STATS_DIR="/etc/vps-toolbox/stats"
 STATS_FILE="$STATS_DIR/usage.stats"
 
 # 初始化统计目录
+_get_machine_id() {
+    if [[ -f /etc/machine-id ]]; then
+        head -c 12 /etc/machine-id
+    elif [[ -f /sys/class/net/eth0/address ]]; then
+        cat /sys/class/net/eth0/address | tr -d ':' | head -c 12
+    else
+        hostname | md5sum | head -c 12
+    fi
+}
+
 init_stats() {
     mkdir -p "$STATS_DIR"
+    local machine_id=$(_get_machine_id)
     if [[ ! -f "$STATS_FILE" ]]; then
-        echo "total:0" > "$STATS_FILE"
+        echo "machine_id:${machine_id}" > "$STATS_FILE"
+        echo "total:0" >> "$STATS_FILE"
         echo "today:0" >> "$STATS_FILE"
         echo "last_date:$(date +%Y%m%d)" >> "$STATS_FILE"
         echo "daily_record:" >> "$STATS_FILE"
+    else
+        # Check if machine changed
+        local saved_id=$(grep "^machine_id:" "$STATS_FILE" | cut -d: -f2)
+        if [[ -n "$saved_id" && "$saved_id" != "$machine_id" ]]; then
+            # New machine, reset stats
+            echo "machine_id:${machine_id}" > "$STATS_FILE"
+            echo "total:0" >> "$STATS_FILE"
+            echo "today:0" >> "$STATS_FILE"
+            echo "last_date:$(date +%Y%m%d)" >> "$STATS_FILE"
+            echo "daily_record:" >> "$STATS_FILE"
+        fi
     fi
 }
 
@@ -5755,6 +5778,7 @@ init_stats() {
 record_usage() {
     init_stats
     
+    local machine_id=$(_get_machine_id)
     local today=$(date +%Y%m%d)
     local total=$(grep "^total:" "$STATS_FILE" | cut -d: -f2)
     local today_count=$(grep "^today:" "$STATS_FILE" | cut -d: -f2)
@@ -5778,8 +5802,9 @@ record_usage() {
     total=$((total + 1))
     today_count=$((today_count + 1))
     
-    # 写回文件
+    # 写回文件 (保留 machine_id)
     cat > "$STATS_FILE" <<EOF
+machine_id:${machine_id}
 total:${total}
 today:${today_count}
 last_date:${today}
@@ -6335,6 +6360,7 @@ check_xray_api() {
 check_cert_expiry() {
     local certs_found=false
     local warn_count=0
+    local now_ts=$(date +%s)
     
     # 检查 acme.sh 证书
     for cert in /root/.acme.sh/*/*.cer /home/*/.acme.sh/*/*.cer; do
@@ -6342,17 +6368,19 @@ check_cert_expiry() {
         certs_found=true
         
         local end_date=$(openssl x509 -in "$cert" -noout -enddate 2>/dev/null | cut -d= -f2)
-        local expire_ts=$(date -d "$end_date" +%s 2>/dev/null || echo "0")
-        local now_ts=$(date +%s)
+        local expire_ts=$(date -d "$end_date" +%s 2>/dev/null || date -j -f "%b %d %H:%M:%S %Y %Z" "$end_date" +%s 2>/dev/null || echo "0")
+        if [[ "$expire_ts" == "0" ]]; then
+            continue
+        fi
         local days_left=$(( (expire_ts - now_ts) / 86400 ))
         
         local domain=$(basename "$cert" .cer)
         if [[ $days_left -lt 7 ]]; then
             echo "CRITICAL|证书 $domain 将在 ${days_left} 天后过期|立即续签"
-            ((warn_count++))
+            warn_count=$((warn_count + 1))
         elif [[ $days_left -lt 30 ]]; then
             echo "WARN|证书 $domain 将在 ${days_left} 天后过期|建议续签"
-            ((warn_count++))
+            warn_count=$((warn_count + 1))
         fi
     done
     
@@ -6362,17 +6390,19 @@ check_cert_expiry() {
         certs_found=true
         
         local end_date=$(openssl x509 -in "$cert" -noout -enddate 2>/dev/null | cut -d= -f2)
-        local expire_ts=$(date -d "$end_date" +%s 2>/dev/null || echo "0")
-        local now_ts=$(date +%s)
+        local expire_ts=$(date -d "$end_date" +%s 2>/dev/null || date -j -f "%b %d %H:%M:%S %Y %Z" "$end_date" +%s 2>/dev/null || echo "0")
+        if [[ "$expire_ts" == "0" ]]; then
+            continue
+        fi
         local days_left=$(( (expire_ts - now_ts) / 86400 ))
         
         local domain=$(basename $(dirname "$cert"))
         if [[ $days_left -lt 7 ]]; then
             echo "CRITICAL|证书 $domain 将在 ${days_left} 天后过期|立即续签"
-            ((warn_count++))
+            warn_count=$((warn_count + 1))
         elif [[ $days_left -lt 30 ]]; then
             echo "WARN|证书 $domain 将在 ${days_left} 天后过期|建议续签"
-            ((warn_count++))
+            warn_count=$((warn_count + 1))
         fi
     done
     
@@ -6389,7 +6419,15 @@ check_cert_expiry() {
 
 # 检查端口暴露
 check_port_exposure() {
-    local exposed_ports=$(ss -tln | awk 'NR>1 {print $4}' | sed 's/.*://' | sort -u | wc -l)
+    local exposed_ports=0
+    if command -v ss &>/dev/null; then
+        exposed_ports=$(ss -tln 2>/dev/null | awk 'NR>1 {print $4}' | sed 's/.*://' | sort -u | wc -l)
+    elif command -v netstat &>/dev/null; then
+        exposed_ports=$(netstat -tln 2>/dev/null | awk 'NR>2 {print $4}' | sed 's/.*://' | sort -u | wc -l)
+    else
+        echo "INFO|无法检测端口 (缺少 ss/netstat)|跳过"
+        return 0
+    fi
     
     if [[ $exposed_ports -gt 10 ]]; then
         echo "WARN|暴露端口过多 (${exposed_ports}个)|检查是否有不必要的端口开放"
@@ -6455,6 +6493,11 @@ run_security_audit() {
     local warn_count=0
     local critical_count=0
     local info_count=0
+    local audit_log="/etc/vps-toolbox/audit.log"
+    local audit_time=$(date '+%Y-%m-%d %H:%M:%S')
+    
+    mkdir -p /etc/vps-toolbox
+    echo "=== 安全审计报告 ${audit_time} ===" > "$audit_log"
     
     # 运行所有检查
     local checks=(
@@ -6471,33 +6514,53 @@ run_security_audit() {
     )
     
     for check_func in "${checks[@]}"; do
-        echo -n "  检查 ${check_func/check_/} ... "
-        local result=$($check_func)
-        local level=$(echo "$result" | cut -d'|' -f1)
-        local detail=$(echo "$result" | cut -d'|' -f2)
-        local advice=$(echo "$result" | cut -d'|' -f3)
+        local check_name=${check_func/check_/}
+        echo -n "  检查 ${check_name} ... "
+        
+        local result
+        result=$($check_func 2>/dev/null) || result="ERROR|检查执行失败|请手动检查"
+        
+        # Handle multi-line results (take first line)
+        local first_line=$(echo "$result" | head -n1)
+        local level=$(echo "$first_line" | cut -d'|' -f1)
+        local detail=$(echo "$first_line" | cut -d'|' -f2)
+        local advice=$(echo "$first_line" | cut -d'|' -f3)
+        
+        # If parsing failed, treat as error
+        if [[ -z "$level" || -z "$detail" ]]; then
+            level="ERROR"
+            detail="检查执行异常"
+            advice="请检查系统环境"
+        fi
         
         case "$level" in
             OK)
                 echo -e "${GREEN}[✓]${NC} $detail"
-                ((ok_count++))
+                ok_count=$((ok_count + 1))
+                echo "[OK] ${check_name}: $detail" >> "$audit_log"
                 ;;
             WARN)
                 echo -e "${YELLOW}[!]${NC} $detail"
                 echo -e "      ${YELLOW}→ $advice${NC}"
-                ((warn_count++))
+                warn_count=$((warn_count + 1))
+                echo "[WARN] ${check_name}: $detail → $advice" >> "$audit_log"
                 ;;
             CRITICAL)
                 echo -e "${RED}[✗]${NC} $detail"
                 echo -e "      ${RED}→ $advice${NC}"
-                ((critical_count++))
+                critical_count=$((critical_count + 1))
+                echo "[CRITICAL] ${check_name}: $detail → $advice" >> "$audit_log"
                 ;;
-            INFO)
+            INFO|ERROR)
                 echo -e "${CYAN}[i]${NC} $detail"
-                ((info_count++))
+                info_count=$((info_count + 1))
+                echo "[INFO] ${check_name}: $detail" >> "$audit_log"
                 ;;
         esac
     done
+    
+    echo "" >> "$audit_log"
+    echo "结果: ${ok_count} 通过 | ${warn_count} 警告 | ${critical_count} 严重 | ${info_count} 信息" >> "$audit_log"
     
     echo ""
     echo -e "${CYAN}============================================================${NC}"
@@ -6658,8 +6721,8 @@ security_audit_menu() {
             1) run_security_audit ;;
             2) auto_fix_security ;;
             3)
-                if [[ -f "$MULTI_VPS_DIR/audit.log" ]]; then
-                    cat "$MULTI_VPS_DIR/audit.log"
+                if [[ -f "/etc/vps-toolbox/audit.log" ]]; then
+                    cat "/etc/vps-toolbox/audit.log"
                 else
                     echo -e "${YELLOW}暂无审计记录${NC}"
                 fi
@@ -9648,6 +9711,11 @@ install_docker_engine() {
     if check_docker_installed; then
         echo -e "${GREEN}Docker 已安装${NC}"
         docker --version
+        echo ""
+        read -rp "是否配置/更换国内镜像源? [y/N]: " cfg_mirror
+        if [[ "$cfg_mirror" == "y" || "$cfg_mirror" == "Y" ]]; then
+            _setup_docker_mirror
+        fi
         return 0
     fi
     echo -e "${YELLOW}正在安装 Docker...${NC}"
@@ -9655,18 +9723,77 @@ install_docker_engine() {
         systemctl enable docker --now 2>/dev/null || service docker start 2>/dev/null || true
         echo -e "${GREEN}Docker 安装完成${NC}"
         docker --version
+        echo ""
+        read -rp "是否配置国内镜像源加速? [y/N]: " cfg_mirror
+        if [[ "$cfg_mirror" == "y" || "$cfg_mirror" == "Y" ]]; then
+            _setup_docker_mirror
+        fi
     else
         error "Docker 安装失败"
     fi
 }
 
+_setup_docker_mirror() {
+    echo ""
+    echo -e "${YELLOW}可用镜像源:${NC}"
+    echo "  1. 阿里云 (需要登录获取专属地址)"
+    echo "  2. 中科大 (docker.mirrors.ustc.edu.cn)"
+    echo "  3. Docker Proxy (dockerproxy.net)"
+    echo "  4. 网易云 (hub-mirror.c.163.com)"
+    echo "  5. 腾讯云 (mirror.ccs.tencentyun.com)"
+    echo "  6. DaoCloud (m.daocloud.io)"
+    echo "  7. 自定义"
+    echo "  8. 返回"
+    echo ""
+    read -rp "请选择 [1-8]: " mirror_choice
+    
+    local mirror_url=""
+    case $mirror_choice in
+        1) mirror_url="https://docker.mirrors.aliyun.com" ;;
+        2) mirror_url="https://docker.mirrors.ustc.edu.cn" ;;
+        3) mirror_url="https://dockerproxy.net" ;;
+        4) mirror_url="https://hub-mirror.c.163.com" ;;
+        5) mirror_url="https://mirror.ccs.tencentyun.com" ;;
+        6) mirror_url="https://m.daocloud.io" ;;
+        7)
+            read -rp "请输入镜像源地址: " custom_mirror
+            mirror_url="$custom_mirror"
+            ;;
+        8) return ;;
+        *) warn "无效选择"; return ;;
+    esac
+    
+    if [[ -n "$mirror_url" ]]; then
+        mkdir -p /etc/docker
+        cat > /etc/docker/daemon.json <<EOF
+{
+  "registry-mirrors": ["${mirror_url}"]
+}
+EOF
+        systemctl restart docker 2>/dev/null || service docker restart 2>/dev/null || true
+        echo -e "${GREEN}镜像源已配置: ${mirror_url}${NC}"
+        echo -e "${YELLOW}正在测试拉取...${NC}"
+        if docker pull hello-world >/dev/null 2>&1; then
+            echo -e "${GREEN}镜像源测试成功!${NC}"
+            docker rmi hello-world >/dev/null 2>&1 || true
+        else
+            echo -e "${YELLOW}镜像源测试可能受限，请确认网络环境${NC}"
+        fi
+    fi
+}
+
 _docker_check_port() {
     local port="$1"
-    if ss -tlnp 2>/dev/null | grep -q ":${port} "; then
-        return 1
+    if command -v ss &>/dev/null; then
+        ss -tln 2>/dev/null | grep -qE ":${port}\b" && return 1
+    elif command -v netstat &>/dev/null; then
+        netstat -tln 2>/dev/null | grep -qE ":${port}\b" && return 1
     fi
-    if netstat -tlnp 2>/dev/null | grep -q ":${port} "; then
-        return 1
+    # Fallback: try to bind to the port
+    if command -v python3 &>/dev/null; then
+        python3 -c "import socket; s=socket.socket(); s.bind(('',${port})); s.close()" 2>/dev/null || return 1
+    elif command -v python &>/dev/null; then
+        python -c "import socket; s=socket.socket(); s.bind(('',${port})); s.close()" 2>/dev/null || return 1
     fi
     return 0
 }
@@ -9679,7 +9806,7 @@ _docker_get_free_port() {
             echo "$p"
             return 0
         fi
-        ((p++))
+        p=$((p + 1))
     done
     echo ""
 }
@@ -9883,6 +10010,314 @@ deploy_alist() {
     echo -e "获取密码命令: ${CYAN}docker logs alist | grep password${NC}"
 }
 
+deploy_vaultwarden() {
+    if ! check_docker_installed; then
+        echo -e "${YELLOW}Docker 未安装，先执行安装...${NC}"
+        install_docker_engine
+    fi
+    local port=3010
+    if ! _docker_check_port "$port"; then
+        port=$(_docker_get_free_port 3011)
+        if [[ -z "$port" ]]; then
+            error "无法找到可用端口"
+        fi
+        echo -e "${YELLOW}端口 3010 被占用，将使用端口 ${port}${NC}"
+    fi
+    echo -e "${YELLOW}正在部署 Vaultwarden (密码管理器)...${NC}"
+    mkdir -p /opt/vaultwarden 2>/dev/null
+    docker run -d \
+        --name vaultwarden \
+        --restart always \
+        -p "${port}:80" \
+        -v /opt/vaultwarden:/data \
+        vaultwarden/server:latest
+    echo -e "${GREEN}Vaultwarden 部署完成!${NC}"
+    echo -e "访问地址: ${CYAN}http://$(get_server_ip):${port}${NC}"
+    echo -e "首次访问需要创建管理员账号"
+}
+
+deploy_qbittorrent() {
+    if ! check_docker_installed; then
+        echo -e "${YELLOW}Docker 未安装，先执行安装...${NC}"
+        install_docker_engine
+    fi
+    local port=8085
+    local bt_port=6881
+    if ! _docker_check_port "$port"; then
+        port=$(_docker_get_free_port 8086)
+        if [[ -z "$port" ]]; then
+            error "无法找到可用端口"
+        fi
+        echo -e "${YELLOW}端口 8085 被占用，Web 将使用端口 ${port}${NC}"
+    fi
+    echo -e "${YELLOW}正在部署 qBittorrent...${NC}"
+    mkdir -p /opt/qbittorrent/{config,downloads} 2>/dev/null
+    docker run -d \
+        --name qbittorrent \
+        --restart always \
+        -p "${port}:8080" \
+        -p "${bt_port}:${bt_port}" \
+        -p "${bt_port}:${bt_port}/udp" \
+        -v /opt/qbittorrent/config:/config \
+        -v /opt/qbittorrent/downloads:/downloads \
+        -e PUID=1000 -e PGID=1000 \
+        linuxserver/qbittorrent:latest
+    echo -e "${GREEN}qBittorrent 部署完成!${NC}"
+    echo -e "Web 地址: ${CYAN}http://$(get_server_ip):${port}${NC}"
+    echo -e "默认账号: ${YELLOW}admin${NC}"
+    echo -e "默认密码: ${YELLOW}从容器日志获取${NC}"
+    echo -e "获取密码: ${CYAN}docker logs qbittorrent | grep password${NC}"
+}
+
+deploy_jellyfin() {
+    if ! check_docker_installed; then
+        echo -e "${YELLOW}Docker 未安装，先执行安装...${NC}"
+        install_docker_engine
+    fi
+    local port=8096
+    if ! _docker_check_port "$port"; then
+        port=$(_docker_get_free_port 8097)
+        if [[ -z "$port" ]]; then
+            error "无法找到可用端口"
+        fi
+        echo -e "${YELLOW}端口 8096 被占用，将使用端口 ${port}${NC}"
+    fi
+    echo -e "${YELLOW}正在部署 Jellyfin (媒体服务器)...${NC}"
+    mkdir -p /opt/jellyfin/{config,cache,media} 2>/dev/null
+    docker run -d \
+        --name jellyfin \
+        --restart always \
+        -p "${port}:8096" \
+        -v /opt/jellyfin/config:/config \
+        -v /opt/jellyfin/cache:/cache \
+        -v /opt/jellyfin/media:/media \
+        jellyfin/jellyfin:latest
+    echo -e "${GREEN}Jellyfin 部署完成!${NC}"
+    echo -e "访问地址: ${CYAN}http://$(get_server_ip):${port}${NC}"
+    echo -e "首次访问需要初始化设置"
+}
+
+deploy_redis() {
+    if ! check_docker_installed; then
+        echo -e "${YELLOW}Docker 未安装，先执行安装...${NC}"
+        install_docker_engine
+    fi
+    local port=6379
+    if ! _docker_check_port "$port"; then
+        port=$(_docker_get_free_port 6380)
+        if [[ -z "$port" ]]; then
+            error "无法找到可用端口"
+        fi
+        echo -e "${YELLOW}端口 6379 被占用，将使用端口 ${port}${NC}"
+    fi
+    echo -e "${YELLOW}正在部署 Redis...${NC}"
+    mkdir -p /opt/redis 2>/dev/null
+    docker run -d \
+        --name redis \
+        --restart always \
+        -p "${port}:6379" \
+        -v /opt/redis:/data \
+        redis:latest redis-server --appendonly yes
+    echo -e "${GREEN}Redis 部署完成!${NC}"
+    echo -e "连接地址: ${CYAN}$(get_server_ip):${port}${NC}"
+    echo -e "默认无密码，生产环境请配置认证"
+}
+
+deploy_mysql() {
+    if ! check_docker_installed; then
+        echo -e "${YELLOW}Docker 未安装，先执行安装...${NC}"
+        install_docker_engine
+    fi
+    local port=3306
+    if ! _docker_check_port "$port"; then
+        port=$(_docker_get_free_port 3307)
+        if [[ -z "$port" ]]; then
+            error "无法找到可用端口"
+        fi
+        echo -e "${YELLOW}端口 3306 被占用，将使用端口 ${port}${NC}"
+    fi
+    echo -e "${YELLOW}正在部署 MySQL...${NC}"
+    mkdir -p /opt/mysql 2>/dev/null
+    docker run -d \
+        --name mysql \
+        --restart always \
+        -p "${port}:3306" \
+        -v /opt/mysql:/var/lib/mysql \
+        -e MYSQL_ROOT_PASSWORD=root123456 \
+        mysql:8.0
+    echo -e "${GREEN}MySQL 部署完成!${NC}"
+    echo -e "连接地址: ${CYAN}$(get_server_ip):${port}${NC}"
+    echo -e "root 密码: ${YELLOW}root123456${NC}"
+}
+
+deploy_memos() {
+    if ! check_docker_installed; then
+        echo -e "${YELLOW}Docker 未安装，先执行安装...${NC}"
+        install_docker_engine
+    fi
+    local port=5230
+    if ! _docker_check_port "$port"; then
+        port=$(_docker_get_free_port 5231)
+        if [[ -z "$port" ]]; then
+            error "无法找到可用端口"
+        fi
+        echo -e "${YELLOW}端口 5230 被占用，将使用端口 ${port}${NC}"
+    fi
+    echo -e "${YELLOW}正在部署 Memos (轻量笔记)...${NC}"
+    mkdir -p /opt/memos 2>/dev/null
+    docker run -d \
+        --name memos \
+        --restart always \
+        -p "${port}:5230" \
+        -v /opt/memos:/var/opt/memos \
+        neosmemo/memos:latest
+    echo -e "${GREEN}Memos 部署完成!${NC}"
+    echo -e "访问地址: ${CYAN}http://$(get_server_ip):${port}${NC}"
+}
+
+deploy_aria2() {
+    if ! check_docker_installed; then
+        echo -e "${YELLOW}Docker 未安装，先执行安装...${NC}"
+        install_docker_engine
+    fi
+    local port=6880
+    if ! _docker_check_port "$port"; then
+        port=$(_docker_get_free_port 6881)
+        if [[ -z "$port" ]]; then
+            error "无法找到可用端口"
+        fi
+        echo -e "${YELLOW}端口 6880 被占用，将使用端口 ${port}${NC}"
+    fi
+    echo -e "${YELLOW}正在部署 Aria2 + AriaNg...${NC}"
+    mkdir -p /opt/aria2/{config,downloads} 2>/dev/null
+    docker run -d \
+        --name aria2 \
+        --restart always \
+        -p "${port}:80" \
+        -p "6800:6800" \
+        -v /opt/aria2/config:/aria2/conf \
+        -v /opt/aria2/downloads:/aria2/downloads \
+        -e PUID=1000 -e PGID=1000 \
+        p3terx/ariang:latest
+    echo -e "${GREEN}Aria2 + AriaNg 部署完成!${NC}"
+    echo -e "Web 地址: ${CYAN}http://$(get_server_ip):${port}${NC}"
+    echo -e "RPC 端口: ${CYAN}6800${NC}"
+    echo -e "默认 RPC Secret: ${YELLOW}从容器日志获取${NC}"
+}
+
+deploy_searxng() {
+    if ! check_docker_installed; then
+        echo -e "${YELLOW}Docker 未安装，先执行安装...${NC}"
+        install_docker_engine
+    fi
+    local port=8089
+    if ! _docker_check_port "$port"; then
+        port=$(_docker_get_free_port 8090)
+        if [[ -z "$port" ]]; then
+            error "无法找到可用端口"
+        fi
+        echo -e "${YELLOW}端口 8089 被占用，将使用端口 ${port}${NC}"
+    fi
+    echo -e "${YELLOW}正在部署 SearXNG (私有搜索引擎)...${NC}"
+    mkdir -p /opt/searxng 2>/dev/null
+    docker run -d \
+        --name searxng \
+        --restart always \
+        -p "${port}:8080" \
+        -v /opt/searxng:/etc/searxng \
+        -e BASE_URL="http://$(get_server_ip):${port}/" \
+        searxng/searxng:latest
+    echo -e "${GREEN}SearXNG 部署完成!${NC}"
+    echo -e "访问地址: ${CYAN}http://$(get_server_ip):${port}${NC}"
+}
+
+deploy_code_server() {
+    if ! check_docker_installed; then
+        echo -e "${YELLOW}Docker 未安装，先执行安装...${NC}"
+        install_docker_engine
+    fi
+    local port=8443
+    if ! _docker_check_port "$port"; then
+        port=$(_docker_get_free_port 8444)
+        if [[ -z "$port" ]]; then
+            error "无法找到可用端口"
+        fi
+        echo -e "${YELLOW}端口 8443 被占用，将使用端口 ${port}${NC}"
+    fi
+    echo -e "${YELLOW}正在部署 Code Server (VS Code 网页版)...${NC}"
+    mkdir -p /opt/code-server 2>/dev/null
+    docker run -d \
+        --name code-server \
+        --restart always \
+        -p "${port}:8443" \
+        -v /opt/code-server:/home/coder \
+        -e PASSWORD=vps123456 \
+        codercom/code-server:latest
+    echo -e "${GREEN}Code Server 部署完成!${NC}"
+    echo -e "访问地址: ${CYAN}http://$(get_server_ip):${port}${NC}"
+    echo -e "密码: ${YELLOW}vps123456${NC}"
+}
+
+deploy_1panel() {
+    if ! check_docker_installed; then
+        echo -e "${YELLOW}Docker 未安装，先执行安装...${NC}"
+        install_docker_engine
+    fi
+    local port=10086
+    local ssh_port=10087
+    if ! _docker_check_port "$port"; then
+        port=$(_docker_get_free_port 10088)
+        if [[ -z "$port" ]]; then
+            error "无法找到可用端口"
+        fi
+        echo -e "${YELLOW}端口 10086 被占用，面板将使用端口 ${port}${NC}"
+    fi
+    echo -e "${YELLOW}正在部署 1Panel (Linux 运维面板)...${NC}"
+    echo -e "${YELLOW}这将需要几分钟...${NC}"
+    mkdir -p /opt/1panel 2>/dev/null
+    docker run -d \
+        --name 1panel \
+        --restart always \
+        -p "${port}:10086" \
+        -p "${ssh_port}:10087" \
+        -v /opt/1panel:/opt/1panel \
+        -v /var/run/docker.sock:/var/run/docker.sock \
+        moelin/1panel:latest
+    echo -e "${GREEN}1Panel 部署完成!${NC}"
+    echo -e "面板地址: ${CYAN}http://$(get_server_ip):${port}${NC}"
+    echo -e "默认账号: ${YELLOW}1panel${NC}"
+    echo -e "默认密码: ${YELLOW}1panel_password${NC}"
+}
+
+deploy_sun_panel() {
+    if ! check_docker_installed; then
+        echo -e "${YELLOW}Docker 未安装，先执行安装...${NC}"
+        install_docker_engine
+    fi
+    local port=3005
+    if ! _docker_check_port "$port"; then
+        port=$(_docker_get_free_port 3006)
+        if [[ -z "$port" ]]; then
+            error "无法找到可用端口"
+        fi
+        echo -e "${YELLOW}端口 3005 被占用，将使用端口 ${port}${NC}"
+    fi
+    echo -e "${YELLOW}正在部署 Sun-Panel (NAS 导航面板)...${NC}"
+    mkdir -p /opt/sun-panel/{database,uploads,conf} 2>/dev/null
+    docker run -d \
+        --name sun-panel \
+        --restart always \
+        -p "${port}:3002" \
+        -v /opt/sun-panel/database:/app/database \
+        -v /opt/sun-panel/uploads:/app/uploads \
+        -v /opt/sun-panel/conf:/app/conf \
+        hslr/sun-panel:latest
+    echo -e "${GREEN}Sun-Panel 部署完成!${NC}"
+    echo -e "访问地址: ${CYAN}http://$(get_server_ip):${port}${NC}"
+    echo -e "默认账号: ${YELLOW}admin@sun.cc${NC}"
+    echo -e "默认密码: ${YELLOW}12345678${NC}"
+}
+
 docker_container_mgmt() {
     if ! check_docker_installed; then
         warn "Docker 未安装"
@@ -9978,13 +10413,32 @@ docker_manager() {
     echo "    7. Nextcloud (私有网盘)"
     echo "    8. Alist (多网盘聚合)"
     echo ""
+    echo -e "${YELLOW}媒体与下载:${NC}"
+    echo "    11. qBittorrent (BT下载)"
+    echo "    12. Jellyfin (媒体服务器)"
+    echo "    13. Aria2 + AriaNg (离线下载)"
+    echo ""
+    echo -e "${YELLOW}工具:${NC}"
+    echo "    14. Vaultwarden (密码管理器)"
+    echo "    15. Memos (轻量笔记)"
+    echo "    16. SearXNG (私有搜索引擎)"
+    echo "    17. Code Server (VS Code网页版)"
+    echo ""
+    echo -e "${YELLOW}运维面板:${NC}"
+    echo "    18. 1Panel (Linux运维面板)"
+    echo "    19. Sun-Panel (NAS导航面板)"
+    echo ""
+    echo -e "${YELLOW}数据库:${NC}"
+    echo "    20. Redis"
+    echo "    21. MySQL"
+    echo ""
     echo -e "${YELLOW}管理:${NC}"
     echo "    9. 容器管理"
     echo "    10. 返回主菜单"
     echo ""
     echo -e "${CYAN}============================================================${NC}"
     echo ""
-    read -rp "请选择 [1-10]: " dk_choice
+    read -rp "请选择 [1-21]: " dk_choice
     case $dk_choice in
         1) install_docker_engine ;;
         2) deploy_portainer ;;
@@ -9996,6 +10450,17 @@ docker_manager() {
         8) deploy_alist ;;
         9) docker_container_mgmt ;;
         10) return ;;
+        11) deploy_qbittorrent ;;
+        12) deploy_jellyfin ;;
+        13) deploy_aria2 ;;
+        14) deploy_vaultwarden ;;
+        15) deploy_memos ;;
+        16) deploy_searxng ;;
+        17) deploy_code_server ;;
+        18) deploy_1panel ;;
+        19) deploy_sun_panel ;;
+        20) deploy_redis ;;
+        21) deploy_mysql ;;
         *) warn "无效选择" ;;
     esac
     echo ""
